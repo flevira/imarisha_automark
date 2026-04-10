@@ -1,6 +1,6 @@
 flet
 pymupdf
-opencv-python
+opencv-python-headless
 pandas
 pytesseract
 pillow

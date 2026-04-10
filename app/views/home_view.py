@@ -21,7 +21,9 @@ def build_home_view(page: ft.Page) -> None:
     )
 
     def on_pick_result(e: ft.FilePickerResultEvent) -> None:
+        print("[home_view] FilePicker result received")
         if e.files:
+            print(f"[home_view] Files selected count: {len(e.files)}")
             selected_file_paths.clear()
             selected_names: list[str] = []
             for file in e.files:
@@ -43,9 +45,13 @@ def build_home_view(page: ft.Page) -> None:
 
     picker = ft.FilePicker(on_result=on_pick_result)
     page.overlay.append(picker)
+    page.file_picker = picker
+    page.update()
 
     def select_files_clicked(_: ft.ControlEvent) -> None:
+        print("[home_view] Select file(s) button clicked")
         try:
+            print("[home_view] Calling FilePicker.pick_files()")
             picker.pick_files(
                 dialog_title="Choose answer sheet files",
                 allow_multiple=True,

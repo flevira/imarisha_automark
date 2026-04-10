@@ -1,78 +1,30 @@
-import flet as ft
+# File picker
+picker = ft.FilePicker(on_result=on_pick_result)
+page.file_picker = picker
+page.overlay.append(picker)
 
-from services.extraction_service import run_extraction
-
-
-def build_home_view(page: ft.Page) -> None:
-    page.controls.clear()
-
-    selected_file_paths: list[str] = []
-    selected_files = ft.Text("No file selected")
-    mode_dropdown = ft.Dropdown(
-        label="Student ID source",
-        value="auto",
-        options=[
-            ft.dropdown.Option("qr"),
-            ft.dropdown.Option("text"),
-            ft.dropdown.Option("auto"),
-        ],
-        width=220,
+def select_files_clicked(_: ft.ControlEvent) -> None:
+    picker.pick_files(
+        dialog_title="Choose answer sheet files",
+        allow_multiple=True,
+        file_type=ft.FilePickerFileType.ANY,
     )
 
-    def on_pick_result(e: ft.FilePickerResultEvent) -> None:
-        if e.files:
-            selected_file_paths.clear()
-            for file in e.files:
-                if file.path:
-                    selected_file_paths.append(file.path)
-
-            selected_files.value = "\n".join(file.name for file in e.files)
-        else:
-            selected_files.value = "No file selected"
-
+def run_clicked(_: ft.ControlEvent) -> None:
+    if not selected_file_paths:
+        selected_files.value = "⚠️ No file selected"
         page.update()
+        return
 
-    picker = ft.FilePicker(on_result=on_pick_result)
-    page.overlay.append(picker)
+    results = []
 
-    def select_files_clicked(_: ft.ControlEvent) -> None:
-        try:
-            picker.pick_files(
-                dialog_title="Choose answer sheet files",
-                allow_multiple=True,
-                file_type=ft.FilePickerFileType.ANY,
-            )
-        except Exception as exc:  # pragma: no cover - defensive UI fallback
-            selected_files.value = f"⚠️ Could not open file browser: {exc}"
-            page.update()
-
-    def run_clicked(_: ft.ControlEvent) -> None:
-        if not selected_file_paths:
-            selected_files.value = "⚠️ No file selected"
-            page.update()
-            return
-
-        results = run_extraction(
-            file_paths=selected_file_paths,
+    for path in selected_file_paths:
+        res = run_extraction(
+            file_path=path,
             student_id_mode=mode_dropdown.value or "auto",
         )
+        results.extend(res)
 
-        selected_files.value = f"✅ Extracted {len(results)} rows"
-        print(results[:5])  # debug
-        page.update()
-
-    page.add(
-        ft.Text("Imarisha Automark", size=28, weight=ft.FontWeight.BOLD),
-        ft.Row(
-            controls=[
-                ft.ElevatedButton("Select file(s)", on_click=select_files_clicked),
-                mode_dropdown,
-                ft.ElevatedButton("Run extraction", on_click=run_clicked),
-                ft.ElevatedButton("Open review"),
-            ]
-        ),
-        ft.Container(height=12),
-        selected_files,
-    )
-
+    selected_files.value = f"✅ Extracted {len(results)} rows"
+    print(results[:5])
     page.update()

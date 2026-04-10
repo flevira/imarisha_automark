@@ -29,10 +29,9 @@ def build_home_view(page: ft.Page) -> None:
             selected_files.value = "\n".join(file.name for file in e.files)
             page.update()
 
-    def on_run_extraction(_: ft.ControlEvent) -> None:
+    def run_clicked(_: ft.ControlEvent) -> None:
         if not selected_file_paths:
-            page.snack_bar = ft.SnackBar(ft.Text("Please select at least one file."))
-            page.snack_bar.open = True
+            selected_files.value = "⚠️ No file selected"
             page.update()
             return
 
@@ -41,10 +40,8 @@ def build_home_view(page: ft.Page) -> None:
             student_id_mode=mode_dropdown.value or "auto",
         )
 
-        page.snack_bar = ft.SnackBar(
-            ft.Text(f"Extraction complete. Parsed {len(results)} row(s).")
-        )
-        page.snack_bar.open = True
+        selected_files.value = f"✅ Extracted {len(results)} rows"
+        print(results[:5])  # debug
         page.update()
 
     picker = ft.FilePicker(on_result=on_pick_result)
@@ -59,7 +56,7 @@ def build_home_view(page: ft.Page) -> None:
                     on_click=lambda _: picker.pick_files(allow_multiple=True),
                 ),
                 mode_dropdown,
-                ft.ElevatedButton("Run extraction", on_click=on_run_extraction),
+                ft.ElevatedButton("Run extraction", on_click=run_clicked),
                 ft.ElevatedButton("Open review"),
             ]
         ),

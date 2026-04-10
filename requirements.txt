@@ -1,4 +1,4 @@
-flet
+flet==0.28.3
 pymupdf
 opencv-python-headless
 pandas

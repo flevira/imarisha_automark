@@ -1,0 +1,12 @@
+
+---
+
+# 3. `requirements.txt`
+
+```txt
+flet
+pymupdf
+opencv-python
+pandas
+pytesseract
+pillow

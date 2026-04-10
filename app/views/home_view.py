@@ -27,6 +27,23 @@ def build_home_view(page: ft.Page) -> None:
                     selected_file_paths.append(file.path)
 
             selected_files.value = "\n".join(file.name for file in e.files)
+        else:
+            selected_files.value = "No file selected"
+
+        page.update()
+
+    picker = ft.FilePicker(on_result=on_pick_result)
+    page.overlay.append(picker)
+
+    def select_files_clicked(_: ft.ControlEvent) -> None:
+        try:
+            picker.pick_files(
+                dialog_title="Choose answer sheet files",
+                allow_multiple=True,
+                file_type=ft.FilePickerFileType.ANY,
+            )
+        except Exception as exc:  # pragma: no cover - defensive UI fallback
+            selected_files.value = f"⚠️ Could not open file browser: {exc}"
             page.update()
 
     def run_clicked(_: ft.ControlEvent) -> None:
@@ -44,17 +61,11 @@ def build_home_view(page: ft.Page) -> None:
         print(results[:5])  # debug
         page.update()
 
-    picker = ft.FilePicker(on_result=on_pick_result)
-    page.overlay.append(picker)
-
     page.add(
         ft.Text("Imarisha Automark", size=28, weight=ft.FontWeight.BOLD),
         ft.Row(
             controls=[
-                ft.ElevatedButton(
-                    "Select file(s)",
-                    on_click=lambda _: picker.pick_files(allow_multiple=True),
-                ),
+                ft.ElevatedButton("Select file(s)", on_click=select_files_clicked),
                 mode_dropdown,
                 ft.ElevatedButton("Run extraction", on_click=run_clicked),
                 ft.ElevatedButton("Open review"),

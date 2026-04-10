@@ -1,5 +1,8 @@
 
 import flet as ft
+import json
+import subprocess
+import sys
 from pathlib import Path
 
 from services.extraction_service import run_extraction
@@ -71,23 +74,37 @@ def build_home_view(page: ft.Page) -> None:
     def select_files_fallback_clicked(_: ft.ControlEvent) -> None:
         print("[home_view] Fallback file dialog button clicked")
         try:
-            import tkinter as tk
-            from tkinter import filedialog
+            # Tkinter dialogs on macOS must run on the main thread.
+            # Flet click handlers can execute outside the main thread, so we
+            # launch a short-lived child process to own the native dialog.
+            helper_code = """
+import json
+import tkinter as tk
+from tkinter import filedialog
 
-            root = tk.Tk()
-            root.withdraw()
-            root.attributes("-topmost", True)
-            selected = list(
-                filedialog.askopenfilenames(
-                    title="Choose answer sheet files",
-                    filetypes=[
-                        ("Supported files", "*.pdf *.png *.jpg *.jpeg *.tif *.tiff"),
-                        ("All files", "*.*"),
-                    ],
-                )
+root = tk.Tk()
+root.withdraw()
+root.attributes("-topmost", True)
+selected = list(
+    filedialog.askopenfilenames(
+        title="Choose answer sheet files",
+        filetypes=[
+            ("Supported files", "*.pdf *.png *.jpg *.jpeg *.tif *.tiff"),
+            ("All files", "*.*"),
+        ],
+    )
+)
+root.destroy()
+print(json.dumps(selected))
+""".strip()
+
+            proc = subprocess.run(
+                [sys.executable, "-c", helper_code],
+                capture_output=True,
+                text=True,
+                check=True,
             )
-            root.destroy()
-
+            selected = json.loads(proc.stdout.strip() or "[]")
             normalized_paths = [str(Path(path).expanduser().resolve()) for path in selected]
             _set_selected_paths(normalized_paths)
         except Exception as exc:  # pragma: no cover - UI fallback

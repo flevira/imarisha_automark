@@ -1,3 +1,4 @@
+
 # File picker
 picker = ft.FilePicker(on_result=on_pick_result)
 page.file_picker = picker

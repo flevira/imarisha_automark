@@ -23,11 +23,19 @@ def build_home_view(page: ft.Page) -> None:
     def on_pick_result(e: ft.FilePickerResultEvent) -> None:
         if e.files:
             selected_file_paths.clear()
+            selected_names: list[str] = []
             for file in e.files:
+                selected_names.append(file.name)
                 if file.path:
                     selected_file_paths.append(file.path)
 
-            selected_files.value = "\n".join(file.name for file in e.files)
+            if selected_file_paths:
+                selected_files.value = "\n".join(selected_names)
+            else:
+                selected_files.value = (
+                    "⚠️ Files were selected, but local file paths were not provided.\n"
+                    "Run the app with desktop mode (flet-desktop) so extraction can read local files."
+                )
         else:
             selected_files.value = "No file selected"
 

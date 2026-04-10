@@ -1,5 +1,6 @@
 
 import flet as ft
+from pathlib import Path
 
 from services.extraction_service import run_extraction
 
@@ -48,6 +49,12 @@ def build_home_view(page: ft.Page) -> None:
     page.file_picker = picker
     page.update()
 
+    def _set_selected_paths(paths: list[str]) -> None:
+        selected_file_paths.clear()
+        selected_file_paths.extend(paths)
+        selected_files.value = "\n".join([Path(path).name for path in paths]) if paths else "No file selected"
+        page.update()
+
     def select_files_clicked(_: ft.ControlEvent) -> None:
         print("[home_view] Select file(s) button clicked")
         try:
@@ -59,6 +66,32 @@ def build_home_view(page: ft.Page) -> None:
             )
         except Exception as exc:  # pragma: no cover - defensive UI fallback
             selected_files.value = f"⚠️ Could not open file browser: {exc}"
+            page.update()
+
+    def select_files_fallback_clicked(_: ft.ControlEvent) -> None:
+        print("[home_view] Fallback file dialog button clicked")
+        try:
+            import tkinter as tk
+            from tkinter import filedialog
+
+            root = tk.Tk()
+            root.withdraw()
+            root.attributes("-topmost", True)
+            selected = list(
+                filedialog.askopenfilenames(
+                    title="Choose answer sheet files",
+                    filetypes=[
+                        ("Supported files", "*.pdf *.png *.jpg *.jpeg *.tif *.tiff"),
+                        ("All files", "*.*"),
+                    ],
+                )
+            )
+            root.destroy()
+
+            normalized_paths = [str(Path(path).expanduser().resolve()) for path in selected]
+            _set_selected_paths(normalized_paths)
+        except Exception as exc:  # pragma: no cover - UI fallback
+            selected_files.value = f"⚠️ Fallback file dialog failed: {exc}"
             page.update()
 
     def run_clicked(_: ft.ControlEvent) -> None:
@@ -81,6 +114,7 @@ def build_home_view(page: ft.Page) -> None:
         ft.Row(
             controls=[
                 ft.ElevatedButton("Select file(s)", on_click=select_files_clicked),
+                ft.ElevatedButton("Select file(s) (fallback)", on_click=select_files_fallback_clicked),
                 mode_dropdown,
                 ft.ElevatedButton("Run extraction", on_click=run_clicked),
                 ft.ElevatedButton("Open review"),

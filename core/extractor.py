@@ -28,7 +28,33 @@ def render_page_to_bgr(page: fitz.Page, zoom: float = RENDER_ZOOM) -> np.ndarray
         img = cv2.cvtColor(img, cv2.COLOR_RGBA2BGR)
     elif pix.n == 3:
         img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
-    return img
+
+    # 1) Grayscale normalization for more robust preprocessing on scanned pages.
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    # 2) Denoise while preserving edges.
+    denoised = cv2.fastNlMeansDenoising(gray, None, h=10, templateWindowSize=7, searchWindowSize=21)
+    # 3) Enhance local contrast in uneven lighting.
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    contrast = clahe.apply(denoised)
+    # 4) Sharpen to make bubble/line boundaries clearer.
+    sharpen_kernel = np.array([[0, -1, 0], [-1, 5, -1], [0, -1, 0]], dtype=np.float32)
+    sharp = cv2.filter2D(contrast, ddepth=-1, kernel=sharpen_kernel)
+    # 5) Adaptive thresholding to handle scan brightness variation.
+    thresh = cv2.adaptiveThreshold(
+        sharp,
+        255,
+        cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+        cv2.THRESH_BINARY,
+        35,
+        11,
+    )
+    # 6) Morphological cleanup for small isolated noise.
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
+    cleaned = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel, iterations=1)
+    cleaned = cv2.morphologyEx(cleaned, cv2.MORPH_CLOSE, kernel, iterations=1)
+
+    # Keep downstream contracts unchanged (3-channel BGR image).
+    return cv2.cvtColor(cleaned, cv2.COLOR_GRAY2BGR)
 
 
 def _sorted_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:

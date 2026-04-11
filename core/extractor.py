@@ -28,14 +28,21 @@ def render_page_to_bgr(page: fitz.Page, zoom: float = RENDER_ZOOM) -> np.ndarray
         img = cv2.cvtColor(img, cv2.COLOR_RGBA2BGR)
     elif pix.n == 3:
         img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+    elif pix.n == 1:
+        img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
 
-    # 1) Grayscale normalization for more robust preprocessing on scanned pages.
+    # 1) Grayscale base + slight blue-ink boost for pen-filled bubbles.
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    blue_boost = cv2.subtract(img[:, :, 0], img[:, :, 2])
+    blue_boost = cv2.normalize(blue_boost, None, 0, 255, cv2.NORM_MINMAX)
+    gray = cv2.addWeighted(gray, 0.85, blue_boost, 0.15, 0)
     # 2) Denoise while preserving edges.
-    denoised = cv2.fastNlMeansDenoising(gray, None, h=10, templateWindowSize=7, searchWindowSize=21)
-    # 3) Enhance local contrast in uneven lighting.
-    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-    contrast = clahe.apply(denoised)
+    denoised = cv2.fastNlMeansDenoising(gray, None, h=5, templateWindowSize=7, searchWindowSize=21)
+    # 3) Correct uneven illumination, then enhance local contrast.
+    background = cv2.GaussianBlur(denoised, (0, 0), 21)
+    normalized = cv2.divide(denoised, background, scale=255)
+    clahe = cv2.createCLAHE(clipLimit=2.2, tileGridSize=(8, 8))
+    contrast = clahe.apply(normalized)
     # 4) Sharpen to make bubble/line boundaries clearer.
     sharpen_kernel = np.array([[0, -1, 0], [-1, 5, -1], [0, -1, 0]], dtype=np.float32)
     sharp = cv2.filter2D(contrast, ddepth=-1, kernel=sharpen_kernel)
@@ -44,17 +51,21 @@ def render_page_to_bgr(page: fitz.Page, zoom: float = RENDER_ZOOM) -> np.ndarray
         sharp,
         255,
         cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-        cv2.THRESH_BINARY,
-        35,
-        11,
+        cv2.THRESH_BINARY_INV,
+        31,
+        7,
     )
     # 6) Morphological cleanup for small isolated noise.
     kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
     cleaned = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel, iterations=1)
     cleaned = cv2.morphologyEx(cleaned, cv2.MORPH_CLOSE, kernel, iterations=1)
 
+    # Preserve grayscale details while selectively strengthening detected marks.
+    base = cv2.addWeighted(normalized, 0.65, sharp, 0.35, 0)
+    preprocessed = np.where(cleaned > 0, sharp, base).astype(np.uint8)
+
     # Keep downstream contracts unchanged (3-channel BGR image).
-    return cv2.cvtColor(cleaned, cv2.COLOR_GRAY2BGR)
+    return cv2.cvtColor(preprocessed, cv2.COLOR_GRAY2BGR)
 
 
 def _sorted_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:

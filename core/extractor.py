@@ -63,18 +63,55 @@ def detect_section_blocks_scanned(img_bgr: np.ndarray) -> list[dict[str, Any]]:
         lines.setdefault(key, []).append(token)
         first_idx_by_line.setdefault(key, i)
 
+    def _levenshtein(a: str, b: str, max_dist: int = 2) -> int:
+        if abs(len(a) - len(b)) > max_dist:
+            return max_dist + 1
+        prev = list(range(len(b) + 1))
+        for i, ca in enumerate(a, start=1):
+            curr = [i]
+            row_min = curr[0]
+            for j, cb in enumerate(b, start=1):
+                cost = 0 if ca == cb else 1
+                curr.append(
+                    min(
+                        prev[j] + 1,
+                        curr[j - 1] + 1,
+                        prev[j - 1] + cost,
+                    )
+                )
+                row_min = min(row_min, curr[-1])
+            if row_min > max_dist:
+                return max_dist + 1
+            prev = curr
+        return prev[-1]
+
+    def _fuzzy_substring_match(text: str, pattern: str, max_dist: int = 2) -> bool:
+        if pattern in text or text in pattern:
+            return True
+        if len(text) < 4:
+            return False
+
+        min_len = max(4, len(pattern) - max_dist)
+        max_len = min(len(text), len(pattern) + max_dist)
+        for win_len in range(min_len, max_len + 1):
+            for start in range(0, len(text) - win_len + 1):
+                part = text[start : start + win_len]
+                if _levenshtein(part, pattern, max_dist=max_dist) <= max_dist:
+                    return True
+        return False
+
     heading_specs = [
-        ("MC", ("MULTIPLECHOICE",)),
-        ("TF", ("TRUEFALSE",)),
-        ("MATCH", ("MATCHING",)),
-        ("OPEN_ENDED", ("OPENENDED",)),
+        ("MC", ("MULTIPLECHOICE", "MULTIPLE", "CHOICE")),
+        ("TF", ("TRUEFALSE", "TRUE", "FALSE")),
+        ("MATCH", ("MATCHING", "MATCH")),
+        ("OPEN_ENDED", ("OPENENDED", "OPEN", "ENDED")),
     ]
 
     found: list[tuple[str, int]] = []
     for key, toks in lines.items():
         normalized = re.sub(r"[^A-Z]", "", " ".join(toks).upper())
         for section_type, patterns in heading_specs:
-            if any(pat in normalized for pat in patterns):
+            if any(_fuzzy_substring_match(normalized, pat) for pat in patterns):
                 found.append((section_type, int(data["top"][first_idx_by_line[key]])))
                 break
 
@@ -89,15 +126,36 @@ def detect_section_blocks_scanned(img_bgr: np.ndarray) -> list[dict[str, Any]]:
         y1 = found[idx + 1][1] - 8 if idx + 1 < len(found) else h - 10
         if y1 > y0 + 10:
             blocks.append({"section_type": section_type, "y0_px": y0, "y1_px": y1})
+    print(f"[extractor][scanned] detected sections: {len(blocks)}")
     return blocks
 
 
 def extract_question_ids_from_roi(roi_bgr: np.ndarray) -> str | None:
-    txt = pytesseract.image_to_string(
-        roi_bgr,
-        config="--psm 6 -c tessedit_char_whitelist=0123456789",
-    )
-    m = re.search(r"\d{5,6}", txt or "")
+    if roi_bgr.size == 0:
+        return None
+
+    gray = cv2.cvtColor(roi_bgr, cv2.COLOR_BGR2GRAY)
+    upscaled = cv2.resize(gray, None, fx=3.0, fy=3.0, interpolation=cv2.INTER_CUBIC)
+    _, th = cv2.threshold(upscaled, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    inv = cv2.bitwise_not(th)
+
+    variants = [upscaled, th, inv]
+    configs = [
+        "--psm 6 -c tessedit_char_whitelist=0123456789",
+        "--psm 7 -c tessedit_char_whitelist=0123456789",
+    ]
+    candidates: list[str] = []
+
+    for img in variants:
+        for cfg in configs:
+            txt = pytesseract.image_to_string(img, config=cfg) or ""
+            candidates.append(txt)
+            m = re.search(r"\d{5,6}", txt)
+            if m:
+                return m.group(0)
+
+    merged = " ".join(candidates)
+    m = re.search(r"\b\d{5,6}\b", merged)
     return m.group(0) if m else None
 
 
@@ -122,8 +180,13 @@ def extract_rows_for_section_scanned(
     gray = cv2.cvtColor(section_roi, cv2.COLOR_BGR2GRAY)
     _, bw = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
 
-    projection = np.sum(bw > 0, axis=1)
-    active = projection > max(10, int(0.01 * bw.shape[1]))
+    projection = np.sum(bw > 0, axis=1).astype(np.float32)
+    smooth_window = max(5, min(21, (bw.shape[0] // 30) | 1))
+    smooth_kernel = np.ones(smooth_window, dtype=np.float32) / smooth_window
+    projection_smoothed = np.convolve(projection, smooth_kernel, mode="same")
+
+    threshold = max(8.0, float(np.percentile(projection_smoothed, 45)))
+    active = projection_smoothed > threshold
 
     bands: list[tuple[int, int]] = []
     start: int | None = None
@@ -131,18 +194,56 @@ def extract_rows_for_section_scanned(
         if flag and start is None:
             start = i
         elif (not flag) and start is not None:
-            if i - start >= 10:
+            if i - start >= 6:
                 bands.append((start, i))
             start = None
-    if start is not None and (len(active) - start) >= 10:
+    if start is not None and (len(active) - start) >= 6:
         bands.append((start, len(active) - 1))
+
+    if not bands:
+        print(f"[extractor][scanned] rows in {section['section_type']}: 0 (missing question_id: 0)")
+        return []
+
+    section_h = max(1, y1 - y0)
+    min_row_h = max(10, int(section_h * 0.015))
+    max_row_h = max(min_row_h + 8, int(section_h * 0.18))
+    merge_gap = max(3, min_row_h // 2)
+
+    merged_bands: list[tuple[int, int]] = []
+    for b0, b1 in bands:
+        if not merged_bands:
+            merged_bands.append((b0, b1))
+            continue
+        prev0, prev1 = merged_bands[-1]
+        if b0 - prev1 <= merge_gap:
+            merged_bands[-1] = (prev0, b1)
+        else:
+            merged_bands.append((b0, b1))
+
+    refined_bands: list[tuple[int, int]] = []
+    for b0, b1 in merged_bands:
+        height = b1 - b0
+        if height < min_row_h:
+            continue
+        if height > max_row_h:
+            split_count = max(2, int(round(height / max_row_h)))
+            split_h = max(min_row_h, height // split_count)
+            split_start = b0
+            while split_start < b1:
+                split_end = min(b1, split_start + split_h)
+                if split_end - split_start >= min_row_h:
+                    refined_bands.append((split_start, split_end))
+                split_start = split_end
+            continue
+        refined_bands.append((b0, b1))
 
     rows: list[dict[str, Any]] = []
     w = img_bgr.shape[1]
     qid_x1 = int(w * 0.35)
     item_x0 = int(w * 0.18)
 
-    for yb0, yb1 in bands:
+    missing_qid = 0
+    for yb0, yb1 in refined_bands:
         y_abs0 = y0 + yb0
         y_abs1 = y0 + yb1
         if y_abs1 <= y_abs0:
@@ -150,8 +251,10 @@ def extract_rows_for_section_scanned(
 
         left_roi = img_bgr[y_abs0:y_abs1, :qid_x1]
         qid = extract_question_ids_from_roi(left_roi)
+        needs_review = False
         if not qid:
-            continue
+            missing_qid += 1
+            needs_review = True
 
         item_number = None
         if section["section_type"] == "MATCH":
@@ -167,9 +270,14 @@ def extract_rows_for_section_scanned(
                 "item_number": item_number,
                 "y_center_px": (y_abs0 + y_abs1) / 2.0,
                 "row_bbox_px": (0, y_abs0, w, y_abs1),
+                "needs_review": needs_review,
             }
         )
 
+    print(
+        f"[extractor][scanned] rows in {section['section_type']}: {len(rows)} "
+        f"(missing question_id: {missing_qid})"
+    )
     return rows
 
 
@@ -190,8 +298,29 @@ def _find_option_centers_scanned(
     else:
         x_ratios = [0.70, 0.78, 0.86, 0.94]
 
+    gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
     sx = img_bgr.shape[1] / page.rect.width
-    return {lbl: (img_bgr.shape[1] * ratio) / sx for lbl, ratio in zip(labels, x_ratios)}
+    centers: dict[str, float] = {}
+
+    for lbl, ratio in zip(labels, x_ratios):
+        x_px = int(img_bgr.shape[1] * ratio)
+        x_candidates = [x_px + shift for shift in (-12, -8, -4, 0, 4, 8, 12)]
+        x_candidates = [x for x in x_candidates if 5 <= x < (gray.shape[1] - 5)]
+        if not x_candidates:
+            centers[lbl] = x_px / sx
+            continue
+
+        best_x = x_px
+        best_score = float("inf")
+        for xc in x_candidates:
+            col = gray[:, xc - 2 : xc + 3]
+            score = float(np.mean(col))
+            if score < best_score:
+                best_score = score
+                best_x = xc
+        centers[lbl] = best_x / sx
+
+    return centers
 
 
 def _rows_px_to_page(

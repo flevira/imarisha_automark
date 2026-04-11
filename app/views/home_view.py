@@ -3,9 +3,13 @@ import flet as ft
 import json
 import subprocess
 import sys
+import csv
+from datetime import datetime, timezone
 from pathlib import Path
 
 from services.extraction_service import run_extraction
+
+ENABLE_TEMP_CSV_EXPORT = True
 
 
 def build_home_view(page: ft.Page) -> None:
@@ -122,7 +126,29 @@ print(json.dumps(selected))
             student_id_mode=mode_dropdown.value or "auto",
         )
 
-        selected_files.value = f"✅ Extracted {len(results)} rows"
+        status_message = f"✅ Extracted {len(results)} rows"
+        if ENABLE_TEMP_CSV_EXPORT and results:
+            try:
+                first_file = Path(selected_file_paths[0]).expanduser().resolve()
+                timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+                export_path = first_file.parent / f"extracted_preview_{timestamp}.csv"
+
+                fieldnames: list[str] = []
+                for row in results:
+                    for key in row.keys():
+                        if key not in fieldnames:
+                            fieldnames.append(key)
+
+                with export_path.open("w", newline="", encoding="utf-8") as csvfile:
+                    writer = csv.DictWriter(csvfile, fieldnames=fieldnames, extrasaction="ignore")
+                    writer.writeheader()
+                    writer.writerows(results)
+
+                status_message += f"\n📝 Temp CSV preview: {export_path}"
+            except Exception as exc:  # pragma: no cover - temporary UI safety
+                status_message += f"\n⚠️ Could not save temp CSV preview: {exc}"
+
+        selected_files.value = status_message
         print(results[:5])  # debug
         page.update()
 

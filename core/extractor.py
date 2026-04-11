@@ -38,6 +38,56 @@ def _ocr_data(img_bgr: np.ndarray, *, psm: int = 6) -> dict[str, list[Any]]:
     )
 
 
+def _estimate_skew_correction_degrees(img_bgr: np.ndarray) -> float:
+    gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
+    blur = cv2.GaussianBlur(gray, (5, 5), 0)
+    _, bw = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+
+    foreground = cv2.countNonZero(bw)
+    total = bw.shape[0] * bw.shape[1]
+    if total <= 0 or (foreground / total) < 0.005:
+        return 0.0
+
+    ys, xs = np.where(bw > 0)
+    if len(xs) < 300:
+        return 0.0
+
+    coords = np.column_stack((xs, ys)).astype(np.float32)
+    _, _, raw_angle = cv2.minAreaRect(coords)
+    if raw_angle < -45:
+        correction = -(90 + raw_angle)
+    else:
+        correction = -raw_angle
+
+    if abs(correction) < 0.35:
+        return 0.0
+    return float(np.clip(correction, -60.0, 60.0))
+
+
+def _rotate_image_keep_size(img_bgr: np.ndarray, angle_deg: float) -> np.ndarray:
+    if abs(angle_deg) < 1e-6:
+        return img_bgr
+
+    h, w = img_bgr.shape[:2]
+    center = (w / 2.0, h / 2.0)
+    matrix = cv2.getRotationMatrix2D(center, angle_deg, 1.0)
+    return cv2.warpAffine(
+        img_bgr,
+        matrix,
+        (w, h),
+        flags=cv2.INTER_CUBIC,
+        borderMode=cv2.BORDER_CONSTANT,
+        borderValue=(255, 255, 255),
+    )
+
+
+def normalize_scanned_page_rotation(img_bgr: np.ndarray) -> np.ndarray:
+    correction = _estimate_skew_correction_degrees(img_bgr)
+    if abs(correction) < 1e-6:
+        return img_bgr
+    return _rotate_image_keep_size(img_bgr, correction)
+
+
 def detect_section_blocks_scanned(img_bgr: np.ndarray) -> list[dict[str, Any]]:
     data = _ocr_data(img_bgr, psm=6)
     lines: dict[tuple[int, int, int, int], list[str]] = {}
@@ -413,6 +463,8 @@ def extract_file(file_path: str, student_id_mode: str) -> list[dict[str, Any]]:
         img_bgr = render_page_to_bgr(page)
         page_number = page_idx + 1
         use_text_layer = has_usable_text_layer(page)
+        if not use_text_layer:
+            img_bgr = normalize_scanned_page_rotation(img_bgr)
         print(
             f"[extractor] page {page_number}: "
             f"{'text-layer mode' if use_text_layer else 'scanned-image mode'}"

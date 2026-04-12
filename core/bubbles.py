@@ -124,6 +124,7 @@ def append_output_rows(
                 "question_id": row["question_id"],
                 "item_number": None,
                 "answer": None,
+                "answered": "No",
                 "matching_pair": None,
                 "manual_marking": True,
                 "needs_review": True,
@@ -140,9 +141,10 @@ def append_output_rows(
                 "question_id": row["question_id"],
                 "item_number": row["item_number"],
                 "answer": None,
+                "answered": "No",
                 "matching_pair": None,
                 "manual_marking": False,
-                "needs_review": True,
+                "needs_review": False,
                 "score_debug": str(scores),
             }
         )
@@ -156,6 +158,7 @@ def append_output_rows(
                 "question_id": row["question_id"],
                 "item_number": row["item_number"],
                 "answer": ans,
+                "answered": "Yes",
                 "matching_pair": build_matching_pair(row["item_number"], ans)
                 if row["section_type"] == "MATCH"
                 else None,

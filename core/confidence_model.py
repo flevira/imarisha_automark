@@ -118,10 +118,7 @@ class BubbleConfidenceModel:
 
         needs_review = False
         if not positives:
-            if top_prob >= self.config.strong_threshold:
-                positives = [top_label]
-            else:
-                needs_review = True
+            needs_review = True
 
         if abs(top_prob - second_prob) <= self.config.uncertainty_band:
             needs_review = True

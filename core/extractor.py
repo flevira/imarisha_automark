@@ -678,6 +678,7 @@ def extract_file(file_path: str, student_id_mode: str) -> list[dict[str, Any]]:
                     "question_id": None,
                     "item_number": None,
                     "answer": None,
+                    "answered": "No",
                     "matching_pair": None,
                     "manual_marking": False,
                     "needs_review": True,

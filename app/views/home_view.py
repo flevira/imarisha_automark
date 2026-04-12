@@ -205,7 +205,65 @@ print(json.dumps(selected))
             section_name = str(row.get("section") or "UNKNOWN")
             sections[section_name] = sections.get(section_name, 0) + 1
 
+        page_quality: dict[tuple[str, int], dict] = {}
+        for row in results:
+            source_file = str(row.get("source_file") or "")
+            page_number_raw = row.get("page")
+            if not isinstance(page_number_raw, int):
+                continue
+            page_key = (source_file, page_number_raw)
+            if page_key not in page_quality:
+                page_quality[page_key] = row
+
+        quality_scores = [
+            float(page.get("scan_quality_score"))
+            for page in page_quality.values()
+            if isinstance(page.get("scan_quality_score"), (int, float))
+        ]
+        poor_pages = sum(
+            1 for page in page_quality.values() if str(page.get("scan_quality_band")) == "poor"
+        )
+        fair_pages = sum(
+            1 for page in page_quality.values() if str(page.get("scan_quality_band")) == "fair"
+        )
+        good_pages = sum(
+            1 for page in page_quality.values() if str(page.get("scan_quality_band")) == "good"
+        )
+        avg_quality = round(sum(quality_scores) / len(quality_scores), 1) if quality_scores else None
+
         section_lines = [f"- {name}: {count}" for name, count in sorted(sections.items())]
+        quality_lines = (
+            [
+                f"- Pages analyzed for quality: {len(page_quality)}",
+                f"- Average scan quality score: {avg_quality}/100",
+                f"- Good scans: {good_pages}",
+                f"- Fair scans: {fair_pages}",
+                f"- Poor scans: {poor_pages}",
+            ]
+            if page_quality
+            else ["- Scan quality unavailable"]
+        )
+        individual_quality_lines: list[str] = []
+        for (source_file, page_number), page_data in sorted(
+            page_quality.items(),
+            key=lambda item: (item[0][0], item[0][1]),
+        ):
+            file_name = Path(source_file).name if source_file else "unknown-file"
+            brightness = page_data.get("scan_brightness_mean", "n/a")
+            contrast = page_data.get("scan_contrast_std", "n/a")
+            blur_proxy = page_data.get("scan_blur_laplacian_var", "n/a")
+            score = page_data.get("scan_quality_score", "n/a")
+            band = page_data.get("scan_quality_band", "n/a")
+            skew = page_data.get("scan_estimated_skew_deg", "n/a")
+            individual_quality_lines.append(
+                (
+                    f"- {file_name} page {page_number}: "
+                    f"brightness={brightness}, contrast={contrast}, "
+                    f"blur_proxy={blur_proxy}, skew={skew}°, "
+                    f"quality_score={score}/100, quality_band={band}"
+                )
+            )
+
         extraction_stats.value = "\n".join(
             [
                 "Review statistics",
@@ -213,6 +271,10 @@ print(json.dumps(selected))
                 f"- Rows flagged for review: {needs_review}",
                 f"- Rows requiring manual marking: {manual_marking}",
                 f"- Unique students: {unique_students}",
+                "- Scan quality:",
+                *quality_lines,
+                "- Individual scan quality details:",
+                *(individual_quality_lines if individual_quality_lines else ["- (none)"]),
                 "- Section counts:",
                 *(section_lines if section_lines else ["- (none)"]),
             ]

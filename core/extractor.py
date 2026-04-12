@@ -541,6 +541,49 @@ def _sorted_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return sorted(rows, key=sort_key)
 
 
+def _compute_scan_quality_metrics(
+    img_bgr: np.ndarray,
+    estimated_skew: float,
+    used_text_layer: bool,
+) -> dict[str, Any]:
+    gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
+    brightness = float(np.mean(gray))
+    contrast = float(np.std(gray))
+    blur_laplacian_var = float(cv2.Laplacian(gray, cv2.CV_64F).var())
+
+    score = 100.0
+    if brightness < 80.0:
+        score -= min(25.0, (80.0 - brightness) * 0.5)
+    elif brightness > 220.0:
+        score -= min(25.0, (brightness - 220.0) * 0.5)
+
+    if contrast < 35.0:
+        score -= min(20.0, (35.0 - contrast) * 0.7)
+
+    if blur_laplacian_var < 120.0:
+        score -= min(25.0, (120.0 - blur_laplacian_var) * 0.15)
+
+    score -= min(12.0, abs(estimated_skew) * 4.0)
+    score = max(0.0, min(100.0, score))
+
+    if score >= 80.0:
+        quality_band = "good"
+    elif score >= 60.0:
+        quality_band = "fair"
+    else:
+        quality_band = "poor"
+
+    return {
+        "scan_quality_score": round(score, 1),
+        "scan_quality_band": quality_band,
+        "scan_brightness_mean": round(brightness, 1),
+        "scan_contrast_std": round(contrast, 1),
+        "scan_blur_laplacian_var": round(blur_laplacian_var, 1),
+        "scan_estimated_skew_deg": round(float(estimated_skew), 2),
+        "scan_mode": "text-layer" if used_text_layer else "scanned-image",
+    }
+
+
 def _open_file_as_document(file_path: str) -> fitz.Document:
     try:
         return fitz.open(file_path)
@@ -582,6 +625,11 @@ def extract_file(file_path: str, student_id_mode: str) -> list[dict[str, Any]]:
         if not use_text_layer:
             img_bgr = normalize_scanned_page_rotation(img_bgr)
             img_bgr = align_scanned_page_to_template(img_bgr)
+        quality_metrics = _compute_scan_quality_metrics(
+            img_bgr=img_bgr,
+            estimated_skew=estimated_skew,
+            used_text_layer=use_text_layer,
+        )
         print(
             f"[extractor] page {page_number}: "
             f"{'text-layer mode' if use_text_layer else 'scanned-image mode'}"
@@ -611,6 +659,8 @@ def extract_file(file_path: str, student_id_mode: str) -> list[dict[str, Any]]:
                     "needs_review": True,
                     "score_debug": None,
                     "qr_raw": None,
+                    "source_file": file_path,
+                    **quality_metrics,
                 }
             )
             continue
@@ -649,6 +699,8 @@ def extract_file(file_path: str, student_id_mode: str) -> list[dict[str, Any]]:
             "exam_id": exam_id if qr_type == "EXAM" else None,
             "test_id": test_id if qr_type == "TEST" else None,
             "qr_raw": qr_raw,
+            "source_file": file_path,
+            **quality_metrics,
         }
 
         sections = (

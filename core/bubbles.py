@@ -94,6 +94,9 @@ def extract_row_answers(
         needs_review = True
 
     answers = [output_map[label] for label in filled_labels if label in output_map]
+    if not answers:
+        return [], needs_review, {}
+
     debug_scores = {f"score_{key}": value for key, value in scores.items()}
     debug_scores.update({f"prob_{key}": value for key, value in probabilities.items()})
     return answers, needs_review, debug_scores
@@ -144,8 +147,8 @@ def append_output_rows(
                 "answered": "No",
                 "matching_pair": None,
                 "manual_marking": False,
-                "needs_review": False,
-                "score_debug": str(scores),
+                "needs_review": bool(needs_review),
+                "score_debug": None,
             }
         )
         return

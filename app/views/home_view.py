@@ -243,6 +243,27 @@ print(json.dumps(selected))
             if page_quality
             else ["- Scan quality unavailable"]
         )
+        individual_quality_lines: list[str] = []
+        for (source_file, page_number), page_data in sorted(
+            page_quality.items(),
+            key=lambda item: (item[0][0], item[0][1]),
+        ):
+            file_name = Path(source_file).name if source_file else "unknown-file"
+            brightness = page_data.get("scan_brightness_mean", "n/a")
+            contrast = page_data.get("scan_contrast_std", "n/a")
+            blur_proxy = page_data.get("scan_blur_laplacian_var", "n/a")
+            score = page_data.get("scan_quality_score", "n/a")
+            band = page_data.get("scan_quality_band", "n/a")
+            skew = page_data.get("scan_estimated_skew_deg", "n/a")
+            individual_quality_lines.append(
+                (
+                    f"- {file_name} page {page_number}: "
+                    f"brightness={brightness}, contrast={contrast}, "
+                    f"blur_proxy={blur_proxy}, skew={skew}°, "
+                    f"quality_score={score}/100, quality_band={band}"
+                )
+            )
+
         extraction_stats.value = "\n".join(
             [
                 "Review statistics",
@@ -252,6 +273,8 @@ print(json.dumps(selected))
                 f"- Unique students: {unique_students}",
                 "- Scan quality:",
                 *quality_lines,
+                "- Individual scan quality details:",
+                *(individual_quality_lines if individual_quality_lines else ["- (none)"]),
                 "- Section counts:",
                 *(section_lines if section_lines else ["- (none)"]),
             ]

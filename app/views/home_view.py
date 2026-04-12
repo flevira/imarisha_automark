@@ -126,6 +126,8 @@ from tkinter import filedialog
 
 root = tk.Tk()
 root.withdraw()
+root.update_idletasks()
+root.lift()
 root.attributes("-topmost", True)
 root.update()
 selected = list(

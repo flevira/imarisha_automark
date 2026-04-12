@@ -88,6 +88,76 @@ def normalize_scanned_page_rotation(img_bgr: np.ndarray) -> np.ndarray:
     return _rotate_image_keep_size(img_bgr, correction)
 
 
+def _largest_quadrilateral(
+    contours: list[np.ndarray], min_area_ratio: float, img_area: float
+) -> np.ndarray | None:
+    best: np.ndarray | None = None
+    best_area = 0.0
+
+    for contour in contours:
+        perimeter = cv2.arcLength(contour, True)
+        approx = cv2.approxPolyDP(contour, 0.02 * perimeter, True)
+        if len(approx) != 4:
+            continue
+        area = cv2.contourArea(approx)
+        if area <= best_area or area < (img_area * min_area_ratio):
+            continue
+        best = approx
+        best_area = area
+    return best
+
+
+def _order_quad_points(quad: np.ndarray) -> np.ndarray:
+    pts = quad.reshape(4, 2).astype(np.float32)
+    s = pts.sum(axis=1)
+    diff = np.diff(pts, axis=1).reshape(-1)
+
+    ordered = np.zeros((4, 2), dtype=np.float32)
+    ordered[0] = pts[np.argmin(s)]  # top-left
+    ordered[2] = pts[np.argmax(s)]  # bottom-right
+    ordered[1] = pts[np.argmin(diff)]  # top-right
+    ordered[3] = pts[np.argmax(diff)]  # bottom-left
+    return ordered
+
+
+def align_scanned_page_to_template(img_bgr: np.ndarray) -> np.ndarray:
+    h, w = img_bgr.shape[:2]
+    if h <= 20 or w <= 20:
+        return img_bgr
+
+    gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
+    blur = cv2.GaussianBlur(gray, (5, 5), 0)
+    edges = cv2.Canny(blur, 70, 180)
+    edges = cv2.dilate(edges, np.ones((3, 3), dtype=np.uint8), iterations=1)
+    contours, _ = cv2.findContours(edges, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
+
+    quad = _largest_quadrilateral(contours, min_area_ratio=0.35, img_area=float(h * w))
+    if quad is None:
+        return img_bgr
+
+    src = _order_quad_points(quad)
+    dst = np.array(
+        [
+            [0.0, 0.0],
+            [float(w - 1), 0.0],
+            [float(w - 1), float(h - 1)],
+            [0.0, float(h - 1)],
+        ],
+        dtype=np.float32,
+    )
+
+    matrix = cv2.getPerspectiveTransform(src, dst)
+    aligned = cv2.warpPerspective(
+        img_bgr,
+        matrix,
+        (w, h),
+        flags=cv2.INTER_CUBIC,
+        borderMode=cv2.BORDER_CONSTANT,
+        borderValue=(255, 255, 255),
+    )
+    return aligned
+
+
 def detect_section_blocks_scanned(img_bgr: np.ndarray) -> list[dict[str, Any]]:
     data = _ocr_data(img_bgr, psm=6)
     lines: dict[tuple[int, int, int, int], list[str]] = {}
@@ -500,6 +570,7 @@ def extract_file(file_path: str, student_id_mode: str) -> list[dict[str, Any]]:
         use_text_layer = has_usable_text_layer(page)
         if not use_text_layer:
             img_bgr = normalize_scanned_page_rotation(img_bgr)
+            img_bgr = align_scanned_page_to_template(img_bgr)
         print(
             f"[extractor] page {page_number}: "
             f"{'text-layer mode' if use_text_layer else 'scanned-image mode'}"

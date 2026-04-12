@@ -6,9 +6,10 @@ import cv2
 import fitz
 import numpy as np
 
-BUBBLE_EXTRA_MARGIN = 10.0
-BUBBLE_REVIEW_MARGIN = 4.0
+from core.confidence_model import BubbleConfidenceModel
+
 MATCH_LEFT_LABELS = {1: "A", 2: "B", 3: "C", 4: "D"}
+BUBBLE_MODEL = BubbleConfidenceModel()
 
 
 def page_to_image_scale(page: fitz.Page, img_bgr: np.ndarray) -> tuple[float, float]:
@@ -77,35 +78,15 @@ def extract_row_answers(
         cx = int(option_centers[label] * sx)
         scores[label] = sample_bubble_score(gray, cx, cy, radius)
 
-    score_values = list(scores.values())
-    if not score_values:
+    if not scores:
         return [], True, scores
 
-    mean_score = float(np.mean(score_values))
-    max_score = float(np.max(score_values))
-    min_score = float(np.min(score_values))
+    filled_labels, model_review, probabilities = BUBBLE_MODEL.classify(
+        ordered_labels=ordered_labels,
+        scores=scores,
+    )
 
-    filled_labels = [
-        label
-        for label in ordered_labels
-        if scores[label] >= mean_score + BUBBLE_EXTRA_MARGIN
-    ]
-
-    needs_review = False
-
-    if not filled_labels:
-        best_label = max(scores, key=scores.get)
-        sorted_vals = sorted(score_values, reverse=True)
-        if len(sorted_vals) >= 2 and (sorted_vals[0] - sorted_vals[1]) >= (
-            BUBBLE_EXTRA_MARGIN + 2
-        ):
-            filled_labels = [best_label]
-        else:
-            needs_review = True
-
-    if (max_score - min_score) < BUBBLE_REVIEW_MARGIN:
-        needs_review = True
-
+    needs_review = model_review
     if section["section_type"] == "TF" and len(filled_labels) != 1:
         needs_review = True
 
@@ -113,7 +94,9 @@ def extract_row_answers(
         needs_review = True
 
     answers = [output_map[label] for label in filled_labels if label in output_map]
-    return answers, needs_review, scores
+    debug_scores = {f"score_{key}": value for key, value in scores.items()}
+    debug_scores.update({f"prob_{key}": value for key, value in probabilities.items()})
+    return answers, needs_review, debug_scores
 
 
 def build_matching_pair(item_number: int | None, answer: str | None) -> str | None:

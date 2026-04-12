@@ -25,11 +25,11 @@ DEFAULT_MODEL = BubbleModelConfig(
     bias=-1.05,
     w_score=0.022,
     w_z=1.45,
-    w_rel_to_max=1.15,
+    w_rel_to_max=1.25,
     w_rel_to_mean=0.85,
-    positive_threshold=0.62,
+    positive_threshold=0.60,
     strong_threshold=0.78,
-    uncertainty_band=0.08,
+    uncertainty_band=0.06,
 )
 
 MODEL_CONFIG_PATH = Path("core/model_params/bubble_confidence.json")
@@ -130,4 +130,3 @@ class BubbleConfidenceModel:
             needs_review = True
 
         return positives, needs_review, probs
-

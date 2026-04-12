@@ -5,8 +5,8 @@ from typing import Any
 
 import cv2
 import fitz
-import numpy as np
-import pytesseract
+
+from core.ocr_engine import detect_with_fallback
 
 
 def get_page_text(page: fitz.Page) -> str:
@@ -40,43 +40,20 @@ def extract_student_id_handwritten_ocr(img_bgr: np.ndarray) -> tuple[str | None,
     variants.append(th2)
     variants.append(cv2.bitwise_not(th1))
 
-    best_digits: str | None = None
-    best_conf = -1.0
-
-    for variant in variants:
-        data = pytesseract.image_to_data(
-            variant,
-            config="--psm 6 -c tessedit_char_whitelist=0123456789[]:",
-            output_type=pytesseract.Output.DICT,
-        )
-
-        tokens: list[str] = []
-        confs: list[float] = []
-
-        for txt, conf_str in zip(data["text"], data["conf"]):
-            txt = (txt or "").strip()
-            try:
-                conf_val = float(conf_str)
-            except Exception:
-                conf_val = -1.0
-
-            if txt:
-                tokens.append(txt)
-                confs.append(conf_val)
-
-        joined = " ".join(tokens)
-        digit_groups = re.findall(r"\d+", joined)
-
-        if digit_groups:
-            candidate = max(digit_groups, key=len)
-            avg_conf = np.mean([c for c in confs if c >= 0]) if confs else -1.0
-            if len(candidate) >= 1 and avg_conf > best_conf:
-                best_digits = candidate
-                best_conf = avg_conf
-
-    if best_digits:
-        low_conf = best_conf < 45
-        return best_digits, low_conf
+    match = detect_with_fallback(
+        variants,
+        pattern=r"\d+",
+        min_len=1,
+        max_len=16,
+        tesseract_configs=[
+            "--psm 6 -c tessedit_char_whitelist=0123456789[]:",
+            "--psm 7 -c tessedit_char_whitelist=0123456789[]:",
+        ],
+        min_tesseract_confidence=45.0,
+    )
+    if match:
+        low_conf = match.confidence < 55.0
+        return match.text, low_conf
 
     return None, True
 

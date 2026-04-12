@@ -9,6 +9,7 @@ import numpy as np
 import pytesseract
 
 from core.bubbles import append_output_rows, extract_row_answers
+from core.ocr_engine import detect_with_fallback
 from core.qr import decode_qr_robust, parse_qr_data
 from core.rows import extract_rows_for_section
 from core.sections import detect_section_blocks, find_option_centers
@@ -86,6 +87,76 @@ def normalize_scanned_page_rotation(img_bgr: np.ndarray) -> np.ndarray:
     if abs(correction) < 1e-6:
         return img_bgr
     return _rotate_image_keep_size(img_bgr, correction)
+
+
+def _largest_quadrilateral(
+    contours: list[np.ndarray], min_area_ratio: float, img_area: float
+) -> np.ndarray | None:
+    best: np.ndarray | None = None
+    best_area = 0.0
+
+    for contour in contours:
+        perimeter = cv2.arcLength(contour, True)
+        approx = cv2.approxPolyDP(contour, 0.02 * perimeter, True)
+        if len(approx) != 4:
+            continue
+        area = cv2.contourArea(approx)
+        if area <= best_area or area < (img_area * min_area_ratio):
+            continue
+        best = approx
+        best_area = area
+    return best
+
+
+def _order_quad_points(quad: np.ndarray) -> np.ndarray:
+    pts = quad.reshape(4, 2).astype(np.float32)
+    s = pts.sum(axis=1)
+    diff = np.diff(pts, axis=1).reshape(-1)
+
+    ordered = np.zeros((4, 2), dtype=np.float32)
+    ordered[0] = pts[np.argmin(s)]  # top-left
+    ordered[2] = pts[np.argmax(s)]  # bottom-right
+    ordered[1] = pts[np.argmin(diff)]  # top-right
+    ordered[3] = pts[np.argmax(diff)]  # bottom-left
+    return ordered
+
+
+def align_scanned_page_to_template(img_bgr: np.ndarray) -> np.ndarray:
+    h, w = img_bgr.shape[:2]
+    if h <= 20 or w <= 20:
+        return img_bgr
+
+    gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
+    blur = cv2.GaussianBlur(gray, (5, 5), 0)
+    edges = cv2.Canny(blur, 70, 180)
+    edges = cv2.dilate(edges, np.ones((3, 3), dtype=np.uint8), iterations=1)
+    contours, _ = cv2.findContours(edges, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
+
+    quad = _largest_quadrilateral(contours, min_area_ratio=0.35, img_area=float(h * w))
+    if quad is None:
+        return img_bgr
+
+    src = _order_quad_points(quad)
+    dst = np.array(
+        [
+            [0.0, 0.0],
+            [float(w - 1), 0.0],
+            [float(w - 1), float(h - 1)],
+            [0.0, float(h - 1)],
+        ],
+        dtype=np.float32,
+    )
+
+    matrix = cv2.getPerspectiveTransform(src, dst)
+    aligned = cv2.warpPerspective(
+        img_bgr,
+        matrix,
+        (w, h),
+        flags=cv2.INTER_CUBIC,
+        borderMode=cv2.BORDER_CONSTANT,
+        borderValue=(255, 255, 255),
+    )
+    return aligned
 
 
 def detect_section_blocks_scanned(img_bgr: np.ndarray) -> list[dict[str, Any]]:
@@ -189,33 +260,37 @@ def extract_question_ids_from_roi(roi_bgr: np.ndarray) -> str | None:
     _, th = cv2.threshold(upscaled, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
     inv = cv2.bitwise_not(th)
 
-    variants = [upscaled, th, inv]
-    configs = [
-        "--psm 6 -c tessedit_char_whitelist=0123456789",
-        "--psm 7 -c tessedit_char_whitelist=0123456789",
-    ]
-    candidates: list[str] = []
-
-    for img in variants:
-        for cfg in configs:
-            txt = pytesseract.image_to_string(img, config=cfg) or ""
-            candidates.append(txt)
-            m = re.search(r"\d{5,6}", txt)
-            if m:
-                return m.group(0)
-
-    merged = " ".join(candidates)
-    m = re.search(r"\b\d{5,6}\b", merged)
-    return m.group(0) if m else None
+    match = detect_with_fallback(
+        [upscaled, th, inv],
+        pattern=r"\d{5,6}",
+        min_len=5,
+        max_len=6,
+        tesseract_configs=[
+            "--psm 6 -c tessedit_char_whitelist=0123456789",
+            "--psm 7 -c tessedit_char_whitelist=0123456789",
+        ],
+        min_tesseract_confidence=58.0,
+    )
+    return match.text if match else None
 
 
 def extract_item_numbers_from_roi(roi_bgr: np.ndarray) -> int | None:
-    txt = pytesseract.image_to_string(
-        roi_bgr,
-        config="--psm 6 -c tessedit_char_whitelist=1234",
+    gray = cv2.cvtColor(roi_bgr, cv2.COLOR_BGR2GRAY)
+    _, th = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    inv = cv2.bitwise_not(th)
+
+    match = detect_with_fallback(
+        [gray, th, inv],
+        pattern=r"[1-4]",
+        min_len=1,
+        max_len=1,
+        tesseract_configs=[
+            "--psm 6 -c tessedit_char_whitelist=1234",
+            "--psm 7 -c tessedit_char_whitelist=1234",
+        ],
+        min_tesseract_confidence=50.0,
     )
-    m = re.search(r"[1-4]", txt or "")
-    return int(m.group(0)) if m else None
+    return int(match.text) if match else None
 
 
 def extract_rows_for_section_scanned(
@@ -500,6 +575,7 @@ def extract_file(file_path: str, student_id_mode: str) -> list[dict[str, Any]]:
         use_text_layer = has_usable_text_layer(page)
         if not use_text_layer:
             img_bgr = normalize_scanned_page_rotation(img_bgr)
+            img_bgr = align_scanned_page_to_template(img_bgr)
         print(
             f"[extractor] page {page_number}: "
             f"{'text-layer mode' if use_text_layer else 'scanned-image mode'}"

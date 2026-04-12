@@ -81,9 +81,6 @@ def extract_row_answers(
     if not scores:
         return [], True, scores
 
-    if BUBBLE_MODEL.is_blank_row(scores):
-        return [], True, {}
-
     filled_labels, model_review, probabilities = BUBBLE_MODEL.classify(
         ordered_labels=ordered_labels,
         scores=scores,

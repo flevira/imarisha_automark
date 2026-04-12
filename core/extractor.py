@@ -9,6 +9,7 @@ import numpy as np
 import pytesseract
 
 from core.bubbles import append_output_rows, extract_row_answers
+from core.ocr_engine import detect_with_fallback
 from core.qr import decode_qr_robust, parse_qr_data
 from core.rows import extract_rows_for_section
 from core.sections import detect_section_blocks, find_option_centers
@@ -259,33 +260,37 @@ def extract_question_ids_from_roi(roi_bgr: np.ndarray) -> str | None:
     _, th = cv2.threshold(upscaled, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
     inv = cv2.bitwise_not(th)
 
-    variants = [upscaled, th, inv]
-    configs = [
-        "--psm 6 -c tessedit_char_whitelist=0123456789",
-        "--psm 7 -c tessedit_char_whitelist=0123456789",
-    ]
-    candidates: list[str] = []
-
-    for img in variants:
-        for cfg in configs:
-            txt = pytesseract.image_to_string(img, config=cfg) or ""
-            candidates.append(txt)
-            m = re.search(r"\d{5,6}", txt)
-            if m:
-                return m.group(0)
-
-    merged = " ".join(candidates)
-    m = re.search(r"\b\d{5,6}\b", merged)
-    return m.group(0) if m else None
+    match = detect_with_fallback(
+        [upscaled, th, inv],
+        pattern=r"\d{5,6}",
+        min_len=5,
+        max_len=6,
+        tesseract_configs=[
+            "--psm 6 -c tessedit_char_whitelist=0123456789",
+            "--psm 7 -c tessedit_char_whitelist=0123456789",
+        ],
+        min_tesseract_confidence=58.0,
+    )
+    return match.text if match else None
 
 
 def extract_item_numbers_from_roi(roi_bgr: np.ndarray) -> int | None:
-    txt = pytesseract.image_to_string(
-        roi_bgr,
-        config="--psm 6 -c tessedit_char_whitelist=1234",
+    gray = cv2.cvtColor(roi_bgr, cv2.COLOR_BGR2GRAY)
+    _, th = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    inv = cv2.bitwise_not(th)
+
+    match = detect_with_fallback(
+        [gray, th, inv],
+        pattern=r"[1-4]",
+        min_len=1,
+        max_len=1,
+        tesseract_configs=[
+            "--psm 6 -c tessedit_char_whitelist=1234",
+            "--psm 7 -c tessedit_char_whitelist=1234",
+        ],
+        min_tesseract_confidence=50.0,
     )
-    m = re.search(r"[1-4]", txt or "")
-    return int(m.group(0)) if m else None
+    return int(match.text) if match else None
 
 
 def extract_rows_for_section_scanned(
@@ -575,7 +580,7 @@ def extract_file(file_path: str, student_id_mode: str) -> list[dict[str, Any]]:
             # mode so deskew/alignment can be applied consistently.
             use_text_layer = False
         if not use_text_layer:
-            img_bgr = _rotate_image_keep_size(img_bgr, estimated_skew)
+            img_bgr = normalize_scanned_page_rotation(img_bgr)
             img_bgr = align_scanned_page_to_template(img_bgr)
         print(
             f"[extractor] page {page_number}: "

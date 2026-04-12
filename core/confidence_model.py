@@ -1,0 +1,133 @@
+from __future__ import annotations
+
+import json
+import math
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+
+
+@dataclass(frozen=True)
+class BubbleModelConfig:
+    bias: float
+    w_score: float
+    w_z: float
+    w_rel_to_max: float
+    w_rel_to_mean: float
+    positive_threshold: float
+    strong_threshold: float
+    uncertainty_band: float
+
+
+DEFAULT_MODEL = BubbleModelConfig(
+    bias=-1.05,
+    w_score=0.022,
+    w_z=1.45,
+    w_rel_to_max=1.15,
+    w_rel_to_mean=0.85,
+    positive_threshold=0.62,
+    strong_threshold=0.78,
+    uncertainty_band=0.08,
+)
+
+MODEL_CONFIG_PATH = Path("core/model_params/bubble_confidence.json")
+
+
+def _sigmoid(x: float) -> float:
+    return 1.0 / (1.0 + math.exp(-x))
+
+
+def _load_model_config() -> BubbleModelConfig:
+    if not MODEL_CONFIG_PATH.exists():
+        return DEFAULT_MODEL
+
+    try:
+        raw = json.loads(MODEL_CONFIG_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return DEFAULT_MODEL
+
+    merged: dict[str, Any] = {
+        "bias": DEFAULT_MODEL.bias,
+        "w_score": DEFAULT_MODEL.w_score,
+        "w_z": DEFAULT_MODEL.w_z,
+        "w_rel_to_max": DEFAULT_MODEL.w_rel_to_max,
+        "w_rel_to_mean": DEFAULT_MODEL.w_rel_to_mean,
+        "positive_threshold": DEFAULT_MODEL.positive_threshold,
+        "strong_threshold": DEFAULT_MODEL.strong_threshold,
+        "uncertainty_band": DEFAULT_MODEL.uncertainty_band,
+    }
+    for key in merged:
+        if key in raw:
+            try:
+                merged[key] = float(raw[key])
+            except Exception:
+                pass
+    return BubbleModelConfig(**merged)
+
+
+class BubbleConfidenceModel:
+    def __init__(self) -> None:
+        self.config = _load_model_config()
+
+    def label_probabilities(self, scores: dict[str, float]) -> dict[str, float]:
+        if not scores:
+            return {}
+
+        labels = list(scores.keys())
+        values = np.array([float(scores[label]) for label in labels], dtype=np.float32)
+        mean = float(np.mean(values))
+        std = float(np.std(values))
+        std = max(std, 1e-6)
+        vmax = float(np.max(values))
+        vmax = max(vmax, 1e-6)
+
+        probs: dict[str, float] = {}
+        for label in labels:
+            score = float(scores[label])
+            z = (score - mean) / std
+            rel_to_max = score / vmax
+            rel_to_mean = score / max(abs(mean), 1e-6)
+
+            logit = (
+                self.config.bias
+                + (self.config.w_score * score)
+                + (self.config.w_z * z)
+                + (self.config.w_rel_to_max * rel_to_max)
+                + (self.config.w_rel_to_mean * rel_to_mean)
+            )
+            probs[label] = _sigmoid(logit)
+        return probs
+
+    def classify(
+        self, ordered_labels: list[str], scores: dict[str, float]
+    ) -> tuple[list[str], bool, dict[str, float]]:
+        probs = self.label_probabilities(scores)
+        if not probs:
+            return [], True, {}
+
+        threshold = self.config.positive_threshold
+        positives = [label for label in ordered_labels if probs.get(label, 0.0) >= threshold]
+        positives = [label for label in positives if label in probs]
+
+        top_label = max(probs, key=probs.get)
+        top_prob = probs[top_label]
+        sorted_probs = sorted(probs.values(), reverse=True)
+        second_prob = sorted_probs[1] if len(sorted_probs) > 1 else 0.0
+
+        needs_review = False
+        if not positives:
+            if top_prob >= self.config.strong_threshold:
+                positives = [top_label]
+            else:
+                needs_review = True
+
+        if abs(top_prob - second_prob) <= self.config.uncertainty_band:
+            needs_review = True
+
+        if len(positives) > 1 and (top_prob - second_prob) <= (self.config.uncertainty_band * 0.7):
+            needs_review = True
+
+        return positives, needs_review, probs
+

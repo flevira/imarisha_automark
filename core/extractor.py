@@ -573,6 +573,12 @@ def extract_file(file_path: str, student_id_mode: str) -> list[dict[str, Any]]:
         img_bgr = render_page_to_bgr(page)
         page_number = page_idx + 1
         use_text_layer = has_usable_text_layer(page)
+        estimated_skew = _estimate_skew_correction_degrees(img_bgr)
+        if use_text_layer and abs(estimated_skew) >= 1.0:
+            # Some scanned PDFs include an OCR text layer. Their word coordinates are
+            # often unreliable when the underlying scan is skewed, so force scanned
+            # mode so deskew/alignment can be applied consistently.
+            use_text_layer = False
         if not use_text_layer:
             img_bgr = normalize_scanned_page_rotation(img_bgr)
             img_bgr = align_scanned_page_to_template(img_bgr)

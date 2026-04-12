@@ -144,7 +144,7 @@ def append_output_rows(
                 "answered": "No",
                 "matching_pair": None,
                 "manual_marking": False,
-                "needs_review": True,
+                "needs_review": False,
                 "score_debug": str(scores),
             }
         )

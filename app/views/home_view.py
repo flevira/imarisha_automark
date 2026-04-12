@@ -69,7 +69,8 @@ def build_home_view(page: ft.Page) -> None:
             picker.pick_files(
                 dialog_title="Choose answer sheet files",
                 allow_multiple=True,
-                file_type=ft.FilePickerFileType.ANY,
+                file_type=ft.FilePickerFileType.CUSTOM,
+                allowed_extensions=["pdf", "png", "jpg", "jpeg", "tif", "tiff", "bmp", "webp"],
             )
         except Exception as exc:  # pragma: no cover - defensive UI fallback
             selected_files.value = f"⚠️ Could not open file browser: {exc}"
@@ -78,6 +79,43 @@ def build_home_view(page: ft.Page) -> None:
     def select_files_fallback_clicked(_: ft.ControlEvent) -> None:
         print("[home_view] Fallback file dialog button clicked")
         try:
+            # On macOS, using a Tk child process can create a separate Python app icon
+            # and unstable folder navigation behavior. Use AppleScript for a native
+            # open panel that stays in front without spawning a Python GUI app.
+            if sys.platform == "darwin":
+                script = """
+set selectedFiles to choose file with prompt "Choose answer sheet files" of type {"pdf", "png", "jpg", "jpeg", "tif", "tiff", "bmp", "webp"} with multiple selections allowed
+set outputLines to {}
+repeat with selectedFile in selectedFiles
+    set end of outputLines to POSIX path of selectedFile
+end repeat
+set AppleScript's text item delimiters to linefeed
+return outputLines as text
+""".strip()
+
+                proc = subprocess.run(
+                    ["osascript", "-e", script],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                # User cancellation on osascript returns non-zero and "User canceled."
+                if proc.returncode != 0:
+                    stderr = (proc.stderr or "").strip().lower()
+                    if "user canceled" in stderr:
+                        _set_selected_paths([])
+                        return
+                    raise RuntimeError(proc.stderr.strip() or "AppleScript file dialog failed.")
+
+                selected = [
+                    line.strip()
+                    for line in proc.stdout.splitlines()
+                    if line.strip()
+                ]
+                normalized_paths = [str(Path(path).expanduser().resolve()) for path in selected]
+                _set_selected_paths(normalized_paths)
+                return
+
             # Tkinter dialogs on macOS must run on the main thread.
             # Flet click handlers can execute outside the main thread, so we
             # launch a short-lived child process to own the native dialog.
@@ -89,15 +127,18 @@ from tkinter import filedialog
 root = tk.Tk()
 root.withdraw()
 root.attributes("-topmost", True)
+root.update()
 selected = list(
     filedialog.askopenfilenames(
         title="Choose answer sheet files",
+        parent=root,
         filetypes=[
-            ("Supported files", "*.pdf *.png *.jpg *.jpeg *.tif *.tiff"),
+            ("Supported files", "*.pdf *.png *.jpg *.jpeg *.tif *.tiff *.bmp *.webp"),
             ("All files", "*.*"),
         ],
     )
 )
+root.attributes("-topmost", False)
 root.destroy()
 print(json.dumps(selected))
 """.strip()

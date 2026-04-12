@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from services.extraction_service import run_extraction
+from app.views.review_view import build_review_view
 
 ENABLE_TEMP_CSV_EXPORT = True
 
@@ -16,7 +17,9 @@ def build_home_view(page: ft.Page) -> None:
     page.controls.clear()
 
     selected_file_paths: list[str] = []
+    latest_results: list[dict] = []
     selected_files = ft.Text("No file selected")
+    extraction_stats = ft.Text("", selectable=True, visible=False)
     mode_dropdown = ft.Dropdown(
         label="Student ID source",
         value="auto",
@@ -159,6 +162,7 @@ print(json.dumps(selected))
             page.update()
 
     def run_clicked(_: ft.ControlEvent) -> None:
+        nonlocal latest_results
         if not selected_file_paths:
             selected_files.value = "⚠️ No file selected"
             page.update()
@@ -168,6 +172,7 @@ print(json.dumps(selected))
             file_paths=selected_file_paths,
             student_id_mode=mode_dropdown.value or "auto",
         )
+        latest_results = results
 
         status_message = f"✅ Extracted {len(results)} rows"
         if ENABLE_TEMP_CSV_EXPORT and results:
@@ -192,8 +197,32 @@ print(json.dumps(selected))
                 status_message += f"\n⚠️ Could not save temp CSV preview: {exc}"
 
         selected_files.value = status_message
+        needs_review = sum(1 for row in results if row.get("needs_review"))
+        manual_marking = sum(1 for row in results if row.get("manual_marking"))
+        unique_students = len({row.get("student_id") for row in results if row.get("student_id")})
+        sections: dict[str, int] = {}
+        for row in results:
+            section_name = str(row.get("section") or "UNKNOWN")
+            sections[section_name] = sections.get(section_name, 0) + 1
+
+        section_lines = [f"- {name}: {count}" for name, count in sorted(sections.items())]
+        extraction_stats.value = "\n".join(
+            [
+                "Review statistics",
+                f"- Total extracted rows: {len(results)}",
+                f"- Rows flagged for review: {needs_review}",
+                f"- Rows requiring manual marking: {manual_marking}",
+                f"- Unique students: {unique_students}",
+                "- Section counts:",
+                *(section_lines if section_lines else ["- (none)"]),
+            ]
+        )
+        extraction_stats.visible = True
         print(results[:5])  # debug
         page.update()
+
+    def open_review_clicked(_: ft.ControlEvent) -> None:
+        build_review_view(page, extracted_rows=latest_results)
 
     page.add(
         ft.Text("Imarisha Automark", size=28, weight=ft.FontWeight.BOLD),
@@ -203,11 +232,13 @@ print(json.dumps(selected))
                 ft.ElevatedButton("Select file(s) (fallback)", on_click=select_files_fallback_clicked),
                 mode_dropdown,
                 ft.ElevatedButton("Run extraction", on_click=run_clicked),
-                ft.ElevatedButton("Open review"),
+                ft.ElevatedButton("Open review", on_click=open_review_clicked),
             ]
         ),
         ft.Container(height=12),
         selected_files,
+        ft.Container(height=12),
+        extraction_stats,
     )
 
     page.update()

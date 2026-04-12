@@ -19,7 +19,6 @@ from core.student_id import (
 )
 
 RENDER_ZOOM = 3.5
-INCLUDE_OPEN_ENDED = True
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".webp"}
 
 
@@ -344,10 +343,22 @@ def _find_option_centers_scanned(
     if not labels:
         return {}
 
-    if section_type == "TF":
-        x_ratios = [0.78, 0.88]
-    else:
-        x_ratios = [0.70, 0.78, 0.86, 0.94]
+    section_layouts: dict[str, tuple[int, int]] = {
+        "MC": (6, 3),
+        "TF": (4, 3),
+        "MATCH": (7, 4),
+    }
+    total_cols, answer_col_start = section_layouts.get(section_type, (0, 0))
+    if total_cols == 0:
+        return {}
+
+    left_margin = 0.06
+    usable_width = 0.90
+    col_width = usable_width / total_cols
+    x_ratios = [
+        left_margin + ((answer_col_start - 1) + idx + 0.5) * col_width
+        for idx in range(len(labels))
+    ]
 
     gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
     sx = img_bgr.shape[1] / page.rect.width
@@ -565,6 +576,9 @@ def extract_file(file_path: str, student_id_mode: str) -> list[dict[str, Any]]:
         )
 
         for section in sections:
+            if section["section_type"] == "OPEN_ENDED":
+                continue
+
             if use_text_layer:
                 option_centers = find_option_centers(page, section)
                 rows = extract_rows_for_section(page, section)
@@ -575,19 +589,6 @@ def extract_file(file_path: str, student_id_mode: str) -> list[dict[str, Any]]:
                 rows = _rows_px_to_page(
                     extract_rows_for_section_scanned(img_bgr, section), page, img_bgr
                 )
-
-            if section["section_type"] == "OPEN_ENDED":
-                if INCLUDE_OPEN_ENDED:
-                    for row in rows:
-                        append_output_rows(
-                            output_rows=all_rows,
-                            base=base,
-                            row=row,
-                            answers=[],
-                            needs_review=True,
-                            scores={},
-                        )
-                continue
 
             for row in rows:
                 answers, row_review, scores = extract_row_answers(

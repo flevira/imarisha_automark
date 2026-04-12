@@ -19,9 +19,12 @@ def search_text_rects(page: fitz.Page, phrase: str) -> list[fitz.Rect]:
 
 def detect_section_blocks(page: fitz.Page) -> list[SectionBlock]:
     heading_specs = [
+        ("MC", "MULTIPLE"),
         ("MC", "MULTIPLE CHOICE"),
+        ("TF", "TRUEFALSE"),
         ("TF", "TRUE / FALSE"),
         ("MATCH", "MATCHING"),
+        ("OPEN_ENDED", "OPEN"),
         ("OPEN_ENDED", "OPEN ENDED"),
     ]
 
@@ -32,6 +35,14 @@ def detect_section_blocks(page: fitz.Page) -> list[SectionBlock]:
             found.append((section_type, rect))
 
     found.sort(key=lambda x: x[1].y0)
+
+    deduped: list[tuple[str, fitz.Rect]] = []
+    for section_type, rect in found:
+        if deduped and section_type == deduped[-1][0] and abs(rect.y0 - deduped[-1][1].y0) <= 12:
+            continue
+        deduped.append((section_type, rect))
+
+    found = deduped
 
     if not found:
         return []

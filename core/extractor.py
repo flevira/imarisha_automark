@@ -491,8 +491,32 @@ def render_page_to_bgr(page: fitz.Page, zoom: float = RENDER_ZOOM) -> np.ndarray
     elif pix.n == 1:
         img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
 
-    # 1) Grayscale base + slight blue-ink boost for pen-filled bubbles.
+    # 1) Grayscale base + scan-brightness normalization.
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    brightness = float(np.mean(gray))
+    print(f"[preprocess] brightness_before={brightness:.2f}")
+
+    adjustment_applied = False
+    alpha = 1.0
+    beta = 0.0
+    if brightness > 245.0:
+        # Overexposed scans: reduce brightness slightly and increase contrast.
+        alpha = 1.2
+        beta = -20.0
+        adjustment_applied = True
+    elif brightness < 180.0:
+        # Underexposed scans: raise brightness and slightly reduce contrast.
+        alpha = 1.1
+        beta = 20.0
+        adjustment_applied = True
+
+    if adjustment_applied:
+        gray = cv2.convertScaleAbs(gray, alpha=alpha, beta=beta)
+        print(f"[preprocess] brightness_adjustment=applied alpha={alpha:.2f} beta={beta:.1f}")
+    else:
+        print("[preprocess] brightness_adjustment=none")
+
+    # Slight blue-ink boost for pen-filled bubbles.
     blue_boost = cv2.subtract(img[:, :, 0], img[:, :, 2])
     blue_boost = cv2.normalize(blue_boost, None, 0, 255, cv2.NORM_MINMAX)
     gray = cv2.addWeighted(gray, 0.85, blue_boost, 0.15, 0)

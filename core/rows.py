@@ -30,10 +30,14 @@ def extract_rows_for_section(page: fitz.Page, section: dict[str, Any]) -> list[R
         joined = " ".join(texts).upper()
 
         if (
-            "ID A B C D" in joined
-            or "ID T F" in joined
+            "NO QID A B C D" in joined
+            or "QID A B C D" in joined
+            or "NO QID T F" in joined
+            or "QID T F" in joined
+            or "NO QID ITEM A B C D" in joined
             or "QID ITEM A B C D" in joined
             or "QUESTION STUDENT ANSWER" in joined
+            or "NO QID STUDENT ANSWER" in joined
         ):
             continue
 

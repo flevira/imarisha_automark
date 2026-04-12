@@ -69,7 +69,8 @@ def build_home_view(page: ft.Page) -> None:
             picker.pick_files(
                 dialog_title="Choose answer sheet files",
                 allow_multiple=True,
-                file_type=ft.FilePickerFileType.ANY,
+                file_type=ft.FilePickerFileType.CUSTOM,
+                allowed_extensions=["pdf", "png", "jpg", "jpeg", "tif", "tiff", "bmp", "webp"],
             )
         except Exception as exc:  # pragma: no cover - defensive UI fallback
             selected_files.value = f"⚠️ Could not open file browser: {exc}"
@@ -88,16 +89,21 @@ from tkinter import filedialog
 
 root = tk.Tk()
 root.withdraw()
+root.update_idletasks()
+root.lift()
 root.attributes("-topmost", True)
+root.focus_force()
 selected = list(
     filedialog.askopenfilenames(
         title="Choose answer sheet files",
+        parent=root,
         filetypes=[
-            ("Supported files", "*.pdf *.png *.jpg *.jpeg *.tif *.tiff"),
+            ("Supported files", "*.pdf *.png *.jpg *.jpeg *.tif *.tiff *.bmp *.webp"),
             ("All files", "*.*"),
         ],
     )
 )
+root.attributes("-topmost", False)
 root.destroy()
 print(json.dumps(selected))
 """.strip()

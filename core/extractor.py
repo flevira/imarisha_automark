@@ -20,6 +20,7 @@ from core.student_id import (
 
 RENDER_ZOOM = 3.5
 INCLUDE_OPEN_ENDED = True
+IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".webp"}
 
 
 def has_usable_text_layer(page: fitz.Page) -> bool:
@@ -454,8 +455,31 @@ def _sorted_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return sorted(rows, key=sort_key)
 
 
+def _open_file_as_document(file_path: str) -> fitz.Document:
+    try:
+        return fitz.open(file_path)
+    except Exception:
+        lower_path = file_path.lower()
+        if not any(lower_path.endswith(ext) for ext in IMAGE_SUFFIXES):
+            raise
+
+    img_bgr = cv2.imread(file_path, cv2.IMREAD_COLOR)
+    if img_bgr is None:
+        raise ValueError(f"Unsupported or unreadable image file: {file_path}")
+
+    h, w = img_bgr.shape[:2]
+    success, encoded = cv2.imencode(".png", img_bgr)
+    if not success:
+        raise ValueError(f"Failed to encode image file: {file_path}")
+
+    doc = fitz.open()
+    page = doc.new_page(width=float(w), height=float(h))
+    page.insert_image(page.rect, stream=encoded.tobytes())
+    return doc
+
+
 def extract_file(file_path: str, student_id_mode: str) -> list[dict[str, Any]]:
-    doc = fitz.open(file_path)
+    doc = _open_file_as_document(file_path)
     all_rows: list[dict[str, Any]] = []
 
     for page_idx in range(len(doc)):

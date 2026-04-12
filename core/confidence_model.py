@@ -19,6 +19,8 @@ class BubbleModelConfig:
     positive_threshold: float
     strong_threshold: float
     uncertainty_band: float
+    blank_max_score_threshold: float
+    blank_margin_threshold: float
 
 
 DEFAULT_MODEL = BubbleModelConfig(
@@ -30,6 +32,8 @@ DEFAULT_MODEL = BubbleModelConfig(
     positive_threshold=0.60,
     strong_threshold=0.78,
     uncertainty_band=0.06,
+    blank_max_score_threshold=70.0,
+    blank_margin_threshold=8.0,
 )
 
 MODEL_CONFIG_PATH = Path("core/model_params/bubble_confidence.json")
@@ -57,6 +61,8 @@ def _load_model_config() -> BubbleModelConfig:
         "positive_threshold": DEFAULT_MODEL.positive_threshold,
         "strong_threshold": DEFAULT_MODEL.strong_threshold,
         "uncertainty_band": DEFAULT_MODEL.uncertainty_band,
+        "blank_max_score_threshold": DEFAULT_MODEL.blank_max_score_threshold,
+        "blank_margin_threshold": DEFAULT_MODEL.blank_margin_threshold,
     }
     for key in merged:
         if key in raw:
@@ -99,6 +105,21 @@ class BubbleConfidenceModel:
             )
             probs[label] = _sigmoid(logit)
         return probs
+
+    def is_blank_row(self, scores: dict[str, float]) -> bool:
+        if not scores:
+            return True
+
+        values = np.array([float(value) for value in scores.values()], dtype=np.float32)
+        max_score = float(np.max(values))
+        mean_score = float(np.mean(values))
+        margin = max_score - mean_score
+
+        if max_score < self.config.blank_max_score_threshold:
+            return True
+        if margin < self.config.blank_margin_threshold:
+            return True
+        return False
 
     def classify(
         self, ordered_labels: list[str], scores: dict[str, float]

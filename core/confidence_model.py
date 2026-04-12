@@ -118,6 +118,15 @@ class BubbleConfidenceModel:
 
         needs_review = False
         if not positives:
+            # Treat rows as intentionally unanswered when every option remains
+            # clearly below the positive threshold and none stands out.
+            blank_cutoff = threshold - self.config.uncertainty_band
+            is_likely_blank = (
+                top_prob < blank_cutoff
+                and abs(top_prob - second_prob) <= self.config.uncertainty_band
+            )
+            if is_likely_blank:
+                return [], False, probs
             needs_review = True
 
         if abs(top_prob - second_prob) <= self.config.uncertainty_band:

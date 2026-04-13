@@ -168,6 +168,14 @@ print(json.dumps(selected))
                 selected_files.value = f"⚠️ Could not open file browser: {exc}"
                 page.update()
 
+    def select_files_fallback_clicked(_: ft.ControlEvent) -> None:
+        print("[home_view] Select file(s) fallback button clicked")
+        try:
+            _set_selected_paths(_open_native_file_dialog())
+        except Exception as exc:  # pragma: no cover - UI fallback
+            selected_files.value = f"⚠️ Fallback file dialog failed: {exc}"
+            page.update()
+
     def run_clicked(_: ft.ControlEvent) -> None:
         nonlocal latest_results
         if not selected_file_paths:
@@ -298,6 +306,7 @@ print(json.dumps(selected))
         ft.Row(
             controls=[
                 ft.ElevatedButton("Select file(s)", on_click=select_files_clicked),
+                ft.ElevatedButton("Select file(s) (fallback)", on_click=select_files_fallback_clicked),
                 mode_dropdown,
                 ft.ElevatedButton("Run extraction", on_click=run_clicked),
                 ft.ElevatedButton("Open review", on_click=open_review_clicked),

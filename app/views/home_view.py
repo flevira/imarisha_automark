@@ -65,22 +65,7 @@ def build_home_view(page: ft.Page) -> None:
         selected_files.value = "\n".join([Path(path).name for path in paths]) if paths else "No file selected"
         page.update()
 
-    def select_files_clicked(_: ft.ControlEvent) -> None:
-        print("[home_view] Select file(s) button clicked")
-        try:
-            print("[home_view] Calling FilePicker.pick_files()")
-            picker.pick_files(
-                dialog_title="Choose answer sheet files",
-                allow_multiple=True,
-                file_type=ft.FilePickerFileType.CUSTOM,
-                allowed_extensions=["pdf", "png", "jpg", "jpeg", "tif", "tiff", "bmp", "webp"],
-            )
-        except Exception as exc:  # pragma: no cover - defensive UI fallback
-            selected_files.value = f"⚠️ Could not open file browser: {exc}"
-            page.update()
-
-    def select_files_fallback_clicked(_: ft.ControlEvent) -> None:
-        print("[home_view] Fallback file dialog button clicked")
+    def _open_native_file_dialog() -> list[str]:
         try:
             # On macOS, using a Tk child process can create a separate Python app icon
             # and unstable folder navigation behavior. Use AppleScript for a native
@@ -115,9 +100,7 @@ return outputLines as text
                     for line in proc.stdout.splitlines()
                     if line.strip()
                 ]
-                normalized_paths = [str(Path(path).expanduser().resolve()) for path in selected]
-                _set_selected_paths(normalized_paths)
-                return
+                return [str(Path(path).expanduser().resolve()) for path in selected]
 
             # Tkinter dialogs on macOS must run on the main thread.
             # Flet click handlers can execute outside the main thread, so we
@@ -155,11 +138,35 @@ print(json.dumps(selected))
                 check=True,
             )
             selected = json.loads(proc.stdout.strip() or "[]")
-            normalized_paths = [str(Path(path).expanduser().resolve()) for path in selected]
-            _set_selected_paths(normalized_paths)
-        except Exception as exc:  # pragma: no cover - UI fallback
-            selected_files.value = f"⚠️ Fallback file dialog failed: {exc}"
-            page.update()
+            return [str(Path(path).expanduser().resolve()) for path in selected]
+        except Exception as exc:
+            raise RuntimeError(f"Native file dialog failed: {exc}") from exc
+
+    def select_files_clicked(_: ft.ControlEvent) -> None:
+        print("[home_view] Select file(s) button clicked")
+        try:
+            # FilePicker is preferred in Flet and works reliably on most platforms.
+            # On macOS desktop builds, the native picker can become unresponsive in
+            # some setups, so we use the native OS dialog directly.
+            if sys.platform == "darwin":
+                _set_selected_paths(_open_native_file_dialog())
+                return
+
+            print("[home_view] Calling FilePicker.pick_files()")
+            picker.pick_files(
+                dialog_title="Choose answer sheet files",
+                allow_multiple=True,
+                file_type=ft.FilePickerFileType.CUSTOM,
+                allowed_extensions=["pdf", "png", "jpg", "jpeg", "tif", "tiff", "bmp", "webp"],
+            )
+        except Exception:
+            # Single CTA behavior: transparently fall back to a native dialog if
+            # Flet FilePicker is unavailable in this runtime.
+            try:
+                _set_selected_paths(_open_native_file_dialog())
+            except Exception as exc:  # pragma: no cover - UI fallback
+                selected_files.value = f"⚠️ Could not open file browser: {exc}"
+                page.update()
 
     def run_clicked(_: ft.ControlEvent) -> None:
         nonlocal latest_results
@@ -291,7 +298,6 @@ print(json.dumps(selected))
         ft.Row(
             controls=[
                 ft.ElevatedButton("Select file(s)", on_click=select_files_clicked),
-                ft.ElevatedButton("Select file(s) (fallback)", on_click=select_files_fallback_clicked),
                 mode_dropdown,
                 ft.ElevatedButton("Run extraction", on_click=run_clicked),
                 ft.ElevatedButton("Open review", on_click=open_review_clicked),

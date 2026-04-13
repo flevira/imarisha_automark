@@ -84,6 +84,7 @@ def extract_row_answers(
     filled_labels, model_review, probabilities = BUBBLE_MODEL.classify(
         ordered_labels=ordered_labels,
         scores=scores,
+        allow_multiple_answers=(section["section_type"] == "MC"),
     )
 
     needs_review = model_review

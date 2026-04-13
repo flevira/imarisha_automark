@@ -30,3 +30,37 @@ def test_clear_single_mark_is_not_treated_as_blank() -> None:
 
     assert answers == ["A"]
     assert needs_review is False
+
+
+def test_multiple_positive_answers_allowed_without_review() -> None:
+    model = BubbleConfidenceModel()
+    scores = {
+        "A": 75.0,
+        "B": 74.5,
+        "C": 24.0,
+        "D": 23.0,
+    }
+
+    answers, needs_review, _ = model.classify(
+        ["A", "B", "C", "D"],
+        scores,
+        allow_multiple_answers=True,
+    )
+
+    assert answers == ["A", "B"]
+    assert needs_review is False
+
+
+def test_multiple_positive_answers_without_allowance_need_review() -> None:
+    model = BubbleConfidenceModel()
+    scores = {
+        "A": 75.0,
+        "B": 74.5,
+        "C": 24.0,
+        "D": 23.0,
+    }
+
+    answers, needs_review, _ = model.classify(["A", "B", "C", "D"], scores)
+
+    assert answers == ["A", "B"]
+    assert needs_review is True

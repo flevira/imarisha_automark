@@ -107,7 +107,11 @@ class BubbleConfidenceModel:
         return probs
 
     def classify(
-        self, ordered_labels: list[str], scores: dict[str, float]
+        self,
+        ordered_labels: list[str],
+        scores: dict[str, float],
+        *,
+        allow_multiple_answers: bool = False,
     ) -> tuple[list[str], bool, dict[str, float]]:
         probs = self.label_probabilities(scores)
         if not probs:
@@ -151,10 +155,15 @@ class BubbleConfidenceModel:
                 return [], False, probs
             needs_review = True
 
-        if abs(top_prob - second_prob) <= self.config.uncertainty_band:
+        has_uncertain_top_gap = abs(top_prob - second_prob) <= self.config.uncertainty_band
+        if has_uncertain_top_gap and not (allow_multiple_answers and len(positives) > 1):
             needs_review = True
 
-        if len(positives) > 1 and (top_prob - second_prob) <= (self.config.uncertainty_band * 0.7):
+        if (
+            not allow_multiple_answers
+            and len(positives) > 1
+            and (top_prob - second_prob) <= (self.config.uncertainty_band * 0.7)
+        ):
             needs_review = True
 
         return positives, needs_review, probs

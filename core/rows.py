@@ -17,7 +17,16 @@ def get_page_words(page: fitz.Page) -> list[tuple[Any, ...]]:
 
 def extract_rows_for_section(page: fitz.Page, section: dict[str, Any]) -> list[RowData]:
     words = get_page_words(page)
-    section_words = [w for w in words if w[1] >= section["y0"] and w[3] <= section["y1"]]
+    section_x0 = float(section.get("x0", page.rect.x0))
+    section_x1 = float(section.get("x1", page.rect.x1))
+    section_words = [
+        w
+        for w in words
+        if w[1] >= section["y0"]
+        and w[3] <= section["y1"]
+        and w[0] >= section_x0
+        and w[2] <= section_x1
+    ]
     lines = group_words_into_lines(section_words)
 
     rows: list[RowData] = []

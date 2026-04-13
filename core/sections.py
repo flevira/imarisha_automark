@@ -34,31 +34,46 @@ def detect_section_blocks(page: fitz.Page) -> list[SectionBlock]:
         for rect in rects:
             found.append((section_type, rect))
 
-    found.sort(key=lambda x: x[1].y0)
-
-    deduped: list[tuple[str, fitz.Rect]] = []
-    for section_type, rect in found:
-        if deduped and section_type == deduped[-1][0] and abs(rect.y0 - deduped[-1][1].y0) <= 12:
-            continue
-        deduped.append((section_type, rect))
-
-    found = deduped
-
     if not found:
         return []
 
     page_bottom = page.rect.y1
+    page_mid_x = page.rect.width / 2.0
+    margin_x = page.rect.width * 0.03
+
+    left_col = [item for item in found if ((item[1].x0 + item[1].x1) / 2.0) <= page_mid_x]
+    right_col = [item for item in found if ((item[1].x0 + item[1].x1) / 2.0) > page_mid_x]
+
     blocks: list[SectionBlock] = []
 
-    for idx, (section_type, rect) in enumerate(found):
-        y0 = rect.y1 + 6
-        if idx + 1 < len(found):
-            y1 = found[idx + 1][1].y0 - 6
-        else:
-            y1 = page_bottom - 10
+    def _build_column_blocks(
+        column_items: list[tuple[str, fitz.Rect]], x0: float, x1: float
+    ) -> list[SectionBlock]:
+        if not column_items:
+            return []
 
-        if y1 > y0 + 10:
-            blocks.append({"section_type": section_type, "y0": y0, "y1": y1})
+        column_items.sort(key=lambda x: x[1].y0)
+        deduped: list[tuple[str, fitz.Rect]] = []
+        for section_type, rect in column_items:
+            if deduped and section_type == deduped[-1][0] and abs(rect.y0 - deduped[-1][1].y0) <= 12:
+                continue
+            deduped.append((section_type, rect))
+
+        col_blocks: list[SectionBlock] = []
+        for idx, (section_type, rect) in enumerate(deduped):
+            y0 = rect.y1 + 6
+            if idx + 1 < len(deduped):
+                y1 = deduped[idx + 1][1].y0 - 6
+            else:
+                y1 = page_bottom - 10
+            if y1 > y0 + 10:
+                col_blocks.append(
+                    {"section_type": section_type, "y0": y0, "y1": y1, "x0": x0, "x1": x1}
+                )
+        return col_blocks
+
+    blocks.extend(_build_column_blocks(left_col, 0.0, page_mid_x - margin_x))
+    blocks.extend(_build_column_blocks(right_col, page_mid_x + margin_x, page.rect.x1))
 
     return blocks
 
@@ -76,8 +91,13 @@ def find_option_centers(page: fitz.Page, section: SectionBlock) -> dict[str, flo
     labels = labels_by_section.get(section["section_type"], [])
     centers: dict[str, float] = {}
 
+    section_x0 = float(section.get("x0", 0.0))
+    section_x1 = float(section.get("x1", page.rect.x1))
+
     for x0, y0, x1, y1, text, *_ in words:
         if y0 < section["y0"] or y1 > top_zone_y1:
+            continue
+        if x0 < section_x0 or x1 > section_x1:
             continue
         clean = text.strip().upper()
         if clean in labels and clean not in centers:

@@ -228,25 +228,51 @@ def detect_section_blocks_scanned(img_bgr: np.ndarray) -> list[dict[str, Any]]:
         ("OPEN_ENDED", ("OPENENDED", "OPEN", "ENDED")),
     ]
 
-    found: list[tuple[str, int]] = []
+    found: list[tuple[str, int, int]] = []
     for key, toks in lines.items():
         normalized = re.sub(r"[^A-Z]", "", " ".join(toks).upper())
         for section_type, patterns in heading_specs:
             if any(_fuzzy_substring_match(normalized, pat) for pat in patterns):
-                found.append((section_type, int(data["top"][first_idx_by_line[key]])))
+                idx = first_idx_by_line[key]
+                found.append((section_type, int(data["top"][idx]), int(data["left"][idx])))
                 break
 
-    found.sort(key=lambda x: x[1])
     if not found:
         return []
 
     h = img_bgr.shape[0]
+    w = img_bgr.shape[1]
+    mid_x = w // 2
+    margin = max(10, int(w * 0.03))
     blocks: list[dict[str, Any]] = []
-    for idx, (section_type, y_top) in enumerate(found):
-        y0 = max(0, y_top + 20)
-        y1 = found[idx + 1][1] - 8 if idx + 1 < len(found) else h - 10
-        if y1 > y0 + 10:
-            blocks.append({"section_type": section_type, "y0_px": y0, "y1_px": y1})
+
+    left_col = [item for item in found if item[2] <= mid_x]
+    right_col = [item for item in found if item[2] > mid_x]
+
+    def _build_column_blocks(
+        column_items: list[tuple[str, int, int]], x0: int, x1: int
+    ) -> list[dict[str, Any]]:
+        if not column_items:
+            return []
+        column_items.sort(key=lambda x: x[1])
+        col_blocks: list[dict[str, Any]] = []
+        for idx, (section_type, y_top, _) in enumerate(column_items):
+            y0 = max(0, y_top + 20)
+            y1 = column_items[idx + 1][1] - 8 if idx + 1 < len(column_items) else h - 10
+            if y1 > y0 + 10:
+                col_blocks.append(
+                    {
+                        "section_type": section_type,
+                        "y0_px": y0,
+                        "y1_px": y1,
+                        "x0_px": max(0, x0),
+                        "x1_px": min(w, x1),
+                    }
+                )
+        return col_blocks
+
+    blocks.extend(_build_column_blocks(left_col, 0, mid_x - margin))
+    blocks.extend(_build_column_blocks(right_col, mid_x + margin, w))
     print(f"[extractor][scanned] detected sections: {len(blocks)}")
     return blocks
 
@@ -301,7 +327,12 @@ def extract_rows_for_section_scanned(
     if y1 <= y0:
         return []
 
-    section_roi = img_bgr[y0:y1, :]
+    x0 = max(0, int(section.get("x0_px", 0)))
+    x1 = min(img_bgr.shape[1], int(section.get("x1_px", img_bgr.shape[1])))
+    if x1 <= x0:
+        return []
+
+    section_roi = img_bgr[y0:y1, x0:x1]
     gray = cv2.cvtColor(section_roi, cv2.COLOR_BGR2GRAY)
     _, bw = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
 
@@ -363,9 +394,9 @@ def extract_rows_for_section_scanned(
         refined_bands.append((b0, b1))
 
     row_candidates: list[dict[str, Any]] = []
-    w = img_bgr.shape[1]
-    qid_x1 = int(w * 0.35)
-    item_x0 = int(w * 0.18)
+    section_w = max(1, x1 - x0)
+    qid_x1_local = int(section_w * 0.35)
+    item_x0_local = int(section_w * 0.18)
 
     missing_qid = 0
     for yb0, yb1 in refined_bands:
@@ -374,7 +405,7 @@ def extract_rows_for_section_scanned(
         if y_abs1 <= y_abs0:
             continue
 
-        left_roi = img_bgr[y_abs0:y_abs1, :qid_x1]
+        left_roi = img_bgr[y_abs0:y_abs1, x0 : x0 + qid_x1_local]
         qid = extract_question_ids_from_roi(left_roi)
         needs_review = False
         if not qid:
@@ -383,7 +414,9 @@ def extract_rows_for_section_scanned(
 
         item_number = None
         if section["section_type"] == "MATCH":
-            item_roi = img_bgr[y_abs0:y_abs1, item_x0:qid_x1]
+            item_roi = img_bgr[
+                y_abs0:y_abs1, x0 + item_x0_local : x0 + qid_x1_local
+            ]
             item_number = extract_item_numbers_from_roi(item_roi)
             if item_number is None:
                 continue
@@ -394,7 +427,7 @@ def extract_rows_for_section_scanned(
                 "question_id": qid,
                 "item_number": item_number,
                 "y_center_px": (y_abs0 + y_abs1) / 2.0,
-                "row_bbox_px": (0, y_abs0, w, y_abs1),
+                "row_bbox_px": (x0, y_abs0, x1, y_abs1),
                 "needs_review": needs_review,
             }
         )
@@ -452,8 +485,9 @@ def _dedupe_scanned_row_candidates(
 
 
 def _find_option_centers_scanned(
-    section_type: str, page: fitz.Page, img_bgr: np.ndarray
+    section: dict[str, Any], page: fitz.Page, img_bgr: np.ndarray
 ) -> dict[str, float]:
+    section_type = section["section_type"]
     labels_by_section = {
         "MC": ["A", "B", "C", "D"],
         "TF": ["T", "F"],
@@ -472,8 +506,13 @@ def _find_option_centers_scanned(
     if total_cols == 0:
         return {}
 
+    x0_px = int(section.get("x0_px", 0))
+    x1_px = int(section.get("x1_px", img_bgr.shape[1]))
+    if x1_px <= x0_px:
+        return {}
+
     left_margin = 0.06
-    usable_width = 0.90
+    usable_width = 0.88
     col_width = usable_width / total_cols
     x_ratios = [
         left_margin + ((answer_col_start - 1) + idx + 0.5) * col_width
@@ -485,7 +524,7 @@ def _find_option_centers_scanned(
     centers: dict[str, float] = {}
 
     for lbl, ratio in zip(labels, x_ratios):
-        x_px = int(img_bgr.shape[1] * ratio)
+        x_px = int(x0_px + (x1_px - x0_px) * ratio)
         x_candidates = [x_px + shift for shift in (-12, -8, -4, 0, 4, 8, 12)]
         x_candidates = [x for x in x_candidates if 5 <= x < (gray.shape[1] - 5)]
         if not x_candidates:
@@ -787,9 +826,7 @@ def extract_file(file_path: str, student_id_mode: str) -> list[dict[str, Any]]:
                 option_centers = find_option_centers(page, section)
                 rows = extract_rows_for_section(page, section)
             else:
-                option_centers = _find_option_centers_scanned(
-                    section["section_type"], page, img_bgr
-                )
+                option_centers = _find_option_centers_scanned(section, page, img_bgr)
                 rows = _rows_px_to_page(
                     extract_rows_for_section_scanned(img_bgr, section), page, img_bgr
                 )

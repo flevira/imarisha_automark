@@ -18,6 +18,19 @@ def build_home_view(page: ft.Page) -> None:
     selected_file_paths: list[str] = []
     selected_files = ft.Text("No file selected")
     extraction_stats = ft.Text("", selectable=True, visible=False)
+    extraction_progress = ft.Row(
+        controls=[
+            ft.ProgressRing(width=20, height=20, stroke_width=3),
+            ft.Text(
+                "Extraction in progress… Please wait while we process your files.",
+                color=ft.Colors.BLUE_GREY_700,
+                weight=ft.FontWeight.W_500,
+            ),
+        ],
+        visible=False,
+        spacing=12,
+        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+    )
     mode_dropdown = ft.Dropdown(
         label="Student ID source",
         value="auto",
@@ -27,6 +40,13 @@ def build_home_view(page: ft.Page) -> None:
             ft.dropdown.Option("auto"),
         ],
         width=220,
+    )
+    run_button = ft.ElevatedButton(
+        "Run extraction",
+        icon=ft.Icons.PLAY_ARROW,
+        on_click=lambda _: None,
+        width=220,
+        height=44,
     )
 
     def on_pick_result(e: ft.FilePickerResultEvent) -> None:
@@ -172,10 +192,19 @@ print(json.dumps(selected))
             page.update()
             return
 
-        results = run_extraction(
-            file_paths=selected_file_paths,
-            student_id_mode=mode_dropdown.value or "auto",
-        )
+        run_button.disabled = True
+        extraction_progress.visible = True
+        selected_files.value = "⏳ Extraction in progress..."
+        page.update()
+
+        try:
+            results = run_extraction(
+                file_paths=selected_file_paths,
+                student_id_mode=mode_dropdown.value or "auto",
+            )
+        finally:
+            run_button.disabled = False
+            extraction_progress.visible = False
 
         status_message = f"✅ Extracted {len(results)} rows"
         if ENABLE_TEMP_CSV_EXPORT and results:
@@ -286,6 +315,8 @@ print(json.dumps(selected))
         print(results[:5])  # debug
         page.update()
 
+    run_button.on_click = run_clicked
+
     page.add(
         ft.Container(
             content=ft.Column(
@@ -324,13 +355,7 @@ print(json.dumps(selected))
                             ft.Container(col={"sm": 12, "md": 3}, content=mode_dropdown),
                             ft.Container(
                                 col={"sm": 12, "md": 3},
-                                content=ft.ElevatedButton(
-                                    "Run extraction",
-                                    icon=ft.Icons.PLAY_ARROW,
-                                    on_click=run_clicked,
-                                    width=220,
-                                    height=44,
-                                ),
+                                content=run_button,
                             ),
                             ft.Container(
                                 col={"sm": 12, "md": 2},
@@ -349,6 +374,13 @@ print(json.dumps(selected))
                         spacing=12,
                     ),
                     ft.Container(height=12),
+                    ft.Container(
+                        content=extraction_progress,
+                        padding=8,
+                        border_radius=10,
+                        bgcolor=ft.Colors.BLUE_50,
+                    ),
+                    ft.Container(height=8),
                     ft.Container(
                         content=selected_files,
                         padding=12,

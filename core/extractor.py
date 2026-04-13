@@ -21,21 +21,6 @@ from core.student_id import (
 
 RENDER_ZOOM = 3.5
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".webp"}
-QID_ROI_X0_RATIO = 0.10
-QID_ROI_X1_RATIO = 0.35
-QID_CHAR_NORMALIZATION = str.maketrans(
-    {
-        "O": "0",
-        "Q": "0",
-        "D": "0",
-        "I": "1",
-        "L": "1",
-        "S": "5",
-        "B": "8",
-        "G": "6",
-        "Z": "2",
-    }
-)
 
 
 def has_usable_text_layer(page: fitz.Page) -> bool:
@@ -277,28 +262,16 @@ def extract_question_ids_from_roi(roi_bgr: np.ndarray) -> str | None:
 
     match = detect_with_fallback(
         [upscaled, th, inv],
-        pattern=r"[0-9OQDILSBGZ]{5,8}",
+        pattern=r"\d{5,6}",
         min_len=5,
-        max_len=8,
+        max_len=6,
         tesseract_configs=[
             "--psm 6 -c tessedit_char_whitelist=0123456789",
             "--psm 7 -c tessedit_char_whitelist=0123456789",
-            "--psm 6 -c tessedit_char_whitelist=0123456789OQDILSBGZ",
-            "--psm 7 -c tessedit_char_whitelist=0123456789OQDILSBGZ",
         ],
         min_tesseract_confidence=58.0,
     )
-    return _normalize_detected_question_id(match.text) if match else None
-
-
-def _normalize_detected_question_id(raw_text: str) -> str | None:
-    normalized = re.sub(r"[^0-9]", "", raw_text.upper().translate(QID_CHAR_NORMALIZATION))
-    if 5 <= len(normalized) <= 6:
-        return normalized
-    if len(normalized) > 6:
-        tail6 = normalized[-6:]
-        return normalized[-5:] if tail6.startswith("0") else tail6
-    return None
+    return match.text if match else None
 
 
 def extract_item_numbers_from_roi(roi_bgr: np.ndarray) -> int | None:
@@ -391,7 +364,7 @@ def extract_rows_for_section_scanned(
 
     row_candidates: list[dict[str, Any]] = []
     w = img_bgr.shape[1]
-    qid_x0, qid_x1 = _question_id_roi_bounds(w)
+    qid_x1 = int(w * 0.35)
     item_x0 = int(w * 0.18)
 
     missing_qid = 0
@@ -401,7 +374,7 @@ def extract_rows_for_section_scanned(
         if y_abs1 <= y_abs0:
             continue
 
-        left_roi = img_bgr[y_abs0:y_abs1, qid_x0:qid_x1]
+        left_roi = img_bgr[y_abs0:y_abs1, :qid_x1]
         qid = extract_question_ids_from_roi(left_roi)
         needs_review = False
         if not qid:
@@ -433,12 +406,6 @@ def extract_rows_for_section_scanned(
         f"(missing question_id: {missing_qid})"
     )
     return rows
-
-
-def _question_id_roi_bounds(page_width_px: int) -> tuple[int, int]:
-    x0 = int(page_width_px * QID_ROI_X0_RATIO)
-    x1 = int(page_width_px * QID_ROI_X1_RATIO)
-    return (max(0, x0), max(0, x1))
 
 
 def _dedupe_scanned_row_candidates(

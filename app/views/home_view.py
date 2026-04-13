@@ -8,7 +8,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from services.extraction_service import run_extraction
-from app.views.review_view import build_review_view
 
 ENABLE_TEMP_CSV_EXPORT = True
 
@@ -17,7 +16,6 @@ def build_home_view(page: ft.Page) -> None:
     page.controls.clear()
 
     selected_file_paths: list[str] = []
-    latest_results: list[dict] = []
     selected_files = ft.Text("No file selected")
     extraction_stats = ft.Text("", selectable=True, visible=False)
     mode_dropdown = ft.Dropdown(
@@ -168,16 +166,7 @@ print(json.dumps(selected))
                 selected_files.value = f"⚠️ Could not open file browser: {exc}"
                 page.update()
 
-    def select_files_fallback_clicked(_: ft.ControlEvent) -> None:
-        print("[home_view] Select file(s) fallback button clicked")
-        try:
-            _set_selected_paths(_open_native_file_dialog())
-        except Exception as exc:  # pragma: no cover - UI fallback
-            selected_files.value = f"⚠️ Fallback file dialog failed: {exc}"
-            page.update()
-
     def run_clicked(_: ft.ControlEvent) -> None:
-        nonlocal latest_results
         if not selected_file_paths:
             selected_files.value = "⚠️ No file selected"
             page.update()
@@ -187,7 +176,6 @@ print(json.dumps(selected))
             file_paths=selected_file_paths,
             student_id_mode=mode_dropdown.value or "auto",
         )
-        latest_results = results
 
         status_message = f"✅ Extracted {len(results)} rows"
         if ENABLE_TEMP_CSV_EXPORT and results:
@@ -298,24 +286,91 @@ print(json.dumps(selected))
         print(results[:5])  # debug
         page.update()
 
-    def open_review_clicked(_: ft.ControlEvent) -> None:
-        build_review_view(page, extracted_rows=latest_results)
-
     page.add(
-        ft.Text("Imarisha Automark", size=28, weight=ft.FontWeight.BOLD),
-        ft.Row(
-            controls=[
-                ft.ElevatedButton("Select file(s)", on_click=select_files_clicked),
-                ft.ElevatedButton("Select file(s) (fallback)", on_click=select_files_fallback_clicked),
-                mode_dropdown,
-                ft.ElevatedButton("Run extraction", on_click=run_clicked),
-                ft.ElevatedButton("Open review", on_click=open_review_clicked),
-            ]
-        ),
-        ft.Container(height=12),
-        selected_files,
-        ft.Container(height=12),
-        extraction_stats,
+        ft.Container(
+            content=ft.Column(
+                controls=[
+                    ft.Text("Imarisha Automark", size=30, weight=ft.FontWeight.BOLD),
+                    ft.Text(
+                        "Upload answer sheets, choose a Student ID source, and run extraction.",
+                        size=14,
+                        color=ft.Colors.BLUE_GREY_700,
+                    ),
+                    ft.Text(
+                        "Accepted files: PDF, PNG, JPG/JPEG, TIF/TIFF, BMP, WEBP. "
+                        "Recommended quality: 300+ DPI, flat/no tilt, well lit, and in sharp focus.",
+                        size=12,
+                        color=ft.Colors.BLUE_GREY_600,
+                    ),
+                    ft.Text(
+                        "Powered by Science Innovation Limited",
+                        size=11,
+                        italic=True,
+                        color=ft.Colors.BLUE_GREY_500,
+                    ),
+                    ft.Container(height=8),
+                    ft.ResponsiveRow(
+                        controls=[
+                            ft.Container(
+                                col={"sm": 12, "md": 4},
+                                content=ft.ElevatedButton(
+                                    "Select file(s)",
+                                    icon=ft.Icons.UPLOAD_FILE,
+                                    on_click=select_files_clicked,
+                                    width=260,
+                                    height=44,
+                                ),
+                            ),
+                            ft.Container(col={"sm": 12, "md": 3}, content=mode_dropdown),
+                            ft.Container(
+                                col={"sm": 12, "md": 3},
+                                content=ft.ElevatedButton(
+                                    "Run extraction",
+                                    icon=ft.Icons.PLAY_ARROW,
+                                    on_click=run_clicked,
+                                    width=220,
+                                    height=44,
+                                ),
+                            ),
+                            ft.Container(
+                                col={"sm": 12, "md": 2},
+                                content=ft.OutlinedButton(
+                                    "Open review",
+                                    icon=ft.Icons.RATE_REVIEW,
+                                    disabled=True,
+                                    tooltip="Coming soon: review workflow",
+                                    width=180,
+                                    height=44,
+                                ),
+                            ),
+                        ],
+                        alignment=ft.MainAxisAlignment.START,
+                        run_spacing=12,
+                        spacing=12,
+                    ),
+                    ft.Container(height=12),
+                    ft.Container(
+                        content=selected_files,
+                        padding=12,
+                        border_radius=10,
+                        bgcolor=ft.Colors.WHITE,
+                        border=ft.border.all(1, ft.Colors.BLUE_GREY_100),
+                    ),
+                    ft.Container(height=12),
+                    ft.Container(
+                        content=extraction_stats,
+                        padding=12,
+                        border_radius=10,
+                        bgcolor=ft.Colors.WHITE,
+                        border=ft.border.all(1, ft.Colors.BLUE_GREY_100),
+                    ),
+                ],
+                spacing=4,
+            ),
+            padding=20,
+            border_radius=12,
+            bgcolor=ft.Colors.BLUE_GREY_50,
+        )
     )
 
     page.update()

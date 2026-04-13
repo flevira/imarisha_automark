@@ -289,15 +289,68 @@ print(json.dumps(selected))
         avg_blur = round(sum(blur_values) / len(blur_values), 1) if blur_values else None
         avg_skew = round(sum(skew_values) / len(skew_values), 2) if skew_values else None
 
+        def metric_line(
+            label: str,
+            value: float | None,
+            min_value: float,
+            max_value: float,
+            unit: str = "",
+            low_comment: str = "",
+            high_comment: str = "",
+        ) -> str:
+            range_label = f"({min_value:g} - {max_value:g}{unit})"
+            if value is None:
+                return f"- {label}: n/a {range_label}"
+            if value < min_value:
+                return (
+                    f"- {label}: {value}{unit} {range_label} 🔴 OUT OF RANGE "
+                    f"(too low: {low_comment})"
+                )
+            if value > max_value:
+                return (
+                    f"- {label}: {value}{unit} {range_label} 🔴 OUT OF RANGE "
+                    f"(too high: {high_comment})"
+                )
+            return f"- {label}: {value}{unit} {range_label} ✅ In range"
+
         section_lines = [f"- {name}: {count}" for name, count in sorted(sections.items())]
         quality_lines = (
             [
                 f"- Pages analyzed for quality: {len(page_quality)}",
                 f"- Average scan quality score: {avg_quality}/100",
-                f"- Combined brightness mean: {avg_brightness if avg_brightness is not None else 'n/a'}",
-                f"- Combined contrast std: {avg_contrast if avg_contrast is not None else 'n/a'}",
-                f"- Combined blur proxy: {avg_blur if avg_blur is not None else 'n/a'}",
-                f"- Combined estimated skew: {avg_skew if avg_skew is not None else 'n/a'}°",
+                metric_line(
+                    "Combined brightness mean",
+                    avg_brightness,
+                    80.0,
+                    220.0,
+                    low_comment="scan is underexposed; increase lighting or scanner exposure",
+                    high_comment="scan is overexposed; reduce brightness/exposure",
+                ),
+                metric_line(
+                    "Combined contrast std",
+                    avg_contrast,
+                    35.0,
+                    85.0,
+                    low_comment="image is too flat; increase contrast settings",
+                    high_comment="image may be harsh/noisy; reduce contrast enhancement",
+                ),
+                metric_line(
+                    "Combined blur proxy",
+                    avg_blur,
+                    120.0,
+                    1000.0,
+                    low_comment="scan is blurry; improve focus/stability",
+                    high_comment="very sharp/noisy edges; verify no over-sharpening",
+                ),
+                metric_line(
+                    "Combined estimated skew",
+                    avg_skew,
+                    -1.0,
+                    1.0,
+                    unit="°",
+                    low_comment="pages are tilted clockwise; align paper before scanning",
+                    high_comment="pages are tilted counter-clockwise; align paper before scanning",
+                ),
                 f"- Good scans: {good_pages}",
                 f"- Fair scans: {fair_pages}",
                 f"- Poor scans: {poor_pages}",

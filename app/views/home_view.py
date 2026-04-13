@@ -252,6 +252,26 @@ print(json.dumps(selected))
             for page in page_quality.values()
             if isinstance(page.get("scan_quality_score"), (int, float))
         ]
+        brightness_values = [
+            float(page.get("scan_brightness_mean"))
+            for page in page_quality.values()
+            if isinstance(page.get("scan_brightness_mean"), (int, float))
+        ]
+        contrast_values = [
+            float(page.get("scan_contrast_std"))
+            for page in page_quality.values()
+            if isinstance(page.get("scan_contrast_std"), (int, float))
+        ]
+        blur_values = [
+            float(page.get("scan_blur_laplacian_var"))
+            for page in page_quality.values()
+            if isinstance(page.get("scan_blur_laplacian_var"), (int, float))
+        ]
+        skew_values = [
+            float(page.get("scan_estimated_skew_deg"))
+            for page in page_quality.values()
+            if isinstance(page.get("scan_estimated_skew_deg"), (int, float))
+        ]
         poor_pages = sum(
             1 for page in page_quality.values() if str(page.get("scan_quality_band")) == "poor"
         )
@@ -262,12 +282,75 @@ print(json.dumps(selected))
             1 for page in page_quality.values() if str(page.get("scan_quality_band")) == "good"
         )
         avg_quality = round(sum(quality_scores) / len(quality_scores), 1) if quality_scores else None
+        avg_brightness = (
+            round(sum(brightness_values) / len(brightness_values), 1) if brightness_values else None
+        )
+        avg_contrast = round(sum(contrast_values) / len(contrast_values), 1) if contrast_values else None
+        avg_blur = round(sum(blur_values) / len(blur_values), 1) if blur_values else None
+        avg_skew = round(sum(skew_values) / len(skew_values), 2) if skew_values else None
+
+        def metric_line(
+            label: str,
+            value: float | None,
+            min_value: float,
+            max_value: float,
+            unit: str = "",
+            low_comment: str = "",
+            high_comment: str = "",
+        ) -> str:
+            range_label = f"({min_value:g} - {max_value:g}{unit})"
+            if value is None:
+                return f"- {label}: n/a {range_label}"
+            if value < min_value:
+                return (
+                    f"- {label}: {value}{unit} {range_label} 🔴 OUT OF RANGE "
+                    f"(too low: {low_comment})"
+                )
+            if value > max_value:
+                return (
+                    f"- {label}: {value}{unit} {range_label} 🔴 OUT OF RANGE "
+                    f"(too high: {high_comment})"
+                )
+            return f"- {label}: {value}{unit} {range_label} ✅ In range"
 
         section_lines = [f"- {name}: {count}" for name, count in sorted(sections.items())]
         quality_lines = (
             [
                 f"- Pages analyzed for quality: {len(page_quality)}",
                 f"- Average scan quality score: {avg_quality}/100",
+                metric_line(
+                    "Combined brightness mean",
+                    avg_brightness,
+                    80.0,
+                    220.0,
+                    low_comment="scan is underexposed; increase lighting or scanner exposure",
+                    high_comment="scan is overexposed; reduce brightness/exposure",
+                ),
+                metric_line(
+                    "Combined contrast std",
+                    avg_contrast,
+                    35.0,
+                    85.0,
+                    low_comment="image is too flat; increase contrast settings",
+                    high_comment="image may be harsh/noisy; reduce contrast enhancement",
+                ),
+                metric_line(
+                    "Combined blur proxy",
+                    avg_blur,
+                    120.0,
+                    1000.0,
+                    low_comment="scan is blurry; improve focus/stability",
+                    high_comment="very sharp/noisy edges; verify no over-sharpening",
+                ),
+                metric_line(
+                    "Combined estimated skew",
+                    avg_skew,
+                    -1.0,
+                    1.0,
+                    unit="°",
+                    low_comment="pages are tilted clockwise; align paper before scanning",
+                    high_comment="pages are tilted counter-clockwise; align paper before scanning",
+                ),
                 f"- Good scans: {good_pages}",
                 f"- Fair scans: {fair_pages}",
                 f"- Poor scans: {poor_pages}",
@@ -275,26 +358,6 @@ print(json.dumps(selected))
             if page_quality
             else ["- Scan quality unavailable"]
         )
-        individual_quality_lines: list[str] = []
-        for (source_file, page_number), page_data in sorted(
-            page_quality.items(),
-            key=lambda item: (item[0][0], item[0][1]),
-        ):
-            file_name = Path(source_file).name if source_file else "unknown-file"
-            brightness = page_data.get("scan_brightness_mean", "n/a")
-            contrast = page_data.get("scan_contrast_std", "n/a")
-            blur_proxy = page_data.get("scan_blur_laplacian_var", "n/a")
-            score = page_data.get("scan_quality_score", "n/a")
-            band = page_data.get("scan_quality_band", "n/a")
-            skew = page_data.get("scan_estimated_skew_deg", "n/a")
-            individual_quality_lines.append(
-                (
-                    f"- {file_name} page {page_number}: "
-                    f"brightness={brightness}, contrast={contrast}, "
-                    f"blur_proxy={blur_proxy}, skew={skew}°, "
-                    f"quality_score={score}/100, quality_band={band}"
-                )
-            )
 
         extraction_stats.value = "\n".join(
             [
@@ -305,8 +368,6 @@ print(json.dumps(selected))
                 f"- Unique students: {unique_students}",
                 "- Scan quality:",
                 *quality_lines,
-                "- Individual scan quality details:",
-                *(individual_quality_lines if individual_quality_lines else ["- (none)"]),
                 "- Section counts:",
                 *(section_lines if section_lines else ["- (none)"]),
             ]

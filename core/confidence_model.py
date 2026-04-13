@@ -19,6 +19,8 @@ class BubbleModelConfig:
     positive_threshold: float
     strong_threshold: float
     uncertainty_band: float
+    blank_score_spread_abs_max: float
+    blank_score_spread_rel_max: float
 
 
 DEFAULT_MODEL = BubbleModelConfig(
@@ -30,6 +32,8 @@ DEFAULT_MODEL = BubbleModelConfig(
     positive_threshold=0.60,
     strong_threshold=0.78,
     uncertainty_band=0.06,
+    blank_score_spread_abs_max=3.0,
+    blank_score_spread_rel_max=0.08,
 )
 
 MODEL_CONFIG_PATH = Path("core/model_params/bubble_confidence.json")
@@ -57,6 +61,8 @@ def _load_model_config() -> BubbleModelConfig:
         "positive_threshold": DEFAULT_MODEL.positive_threshold,
         "strong_threshold": DEFAULT_MODEL.strong_threshold,
         "uncertainty_band": DEFAULT_MODEL.uncertainty_band,
+        "blank_score_spread_abs_max": DEFAULT_MODEL.blank_score_spread_abs_max,
+        "blank_score_spread_rel_max": DEFAULT_MODEL.blank_score_spread_rel_max,
     }
     for key in merged:
         if key in raw:
@@ -115,6 +121,22 @@ class BubbleConfidenceModel:
         top_prob = probs[top_label]
         sorted_probs = sorted(probs.values(), reverse=True)
         second_prob = sorted_probs[1] if len(sorted_probs) > 1 else 0.0
+
+        ordered_scores = [float(scores[label]) for label in ordered_labels if label in scores]
+        if ordered_scores:
+            score_max = max(ordered_scores)
+            score_min = min(ordered_scores)
+            score_spread = score_max - score_min
+            rel_spread = score_spread / max(score_max, 1e-6)
+            is_flat_score_profile = (
+                score_spread <= self.config.blank_score_spread_abs_max
+                and rel_spread <= self.config.blank_score_spread_rel_max
+            )
+            if (
+                is_flat_score_profile
+                and abs(top_prob - second_prob) <= self.config.uncertainty_band
+            ):
+                return [], False, probs
 
         needs_review = False
         if not positives:

@@ -362,7 +362,7 @@ def extract_rows_for_section_scanned(
             continue
         refined_bands.append((b0, b1))
 
-    row_candidates: list[dict[str, Any]] = []
+    rows: list[dict[str, Any]] = []
     w = img_bgr.shape[1]
     qid_x1 = int(w * 0.35)
     item_x0 = int(w * 0.18)
@@ -388,7 +388,7 @@ def extract_rows_for_section_scanned(
             if item_number is None:
                 continue
 
-        row_candidates.append(
+        rows.append(
             {
                 "section_type": section["section_type"],
                 "question_id": qid,
@@ -399,56 +399,11 @@ def extract_rows_for_section_scanned(
             }
         )
 
-    rows = _dedupe_scanned_row_candidates(row_candidates)
-
     print(
         f"[extractor][scanned] rows in {section['section_type']}: {len(rows)} "
         f"(missing question_id: {missing_qid})"
     )
     return rows
-
-
-def _dedupe_scanned_row_candidates(
-    rows: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    if not rows:
-        return []
-
-    qid_present = [row for row in rows if row.get("question_id")]
-    should_drop_missing_qid = len(qid_present) >= 2
-
-    deduped: dict[tuple[str, str, int | None], dict[str, Any]] = {}
-    passthrough: list[dict[str, Any]] = []
-
-    for row in rows:
-        section_type = str(row.get("section_type") or "")
-        qid = row.get("question_id")
-        item_number = row.get("item_number")
-
-        if should_drop_missing_qid and not qid:
-            continue
-
-        if not qid:
-            passthrough.append(row)
-            continue
-
-        if section_type in {"MC", "TF"}:
-            dedupe_key = (section_type, str(qid), None)
-        else:
-            dedupe_key = (section_type, str(qid), item_number)
-
-        current = deduped.get(dedupe_key)
-        if current is None:
-            deduped[dedupe_key] = row
-            continue
-
-        curr_h = float(current["row_bbox_px"][3] - current["row_bbox_px"][1])
-        new_h = float(row["row_bbox_px"][3] - row["row_bbox_px"][1])
-        if new_h > curr_h:
-            deduped[dedupe_key] = row
-
-    combined = [*deduped.values(), *passthrough]
-    return sorted(combined, key=lambda r: float(r.get("y_center_px", 0.0)))
 
 
 def _find_option_centers_scanned(

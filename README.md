@@ -7,7 +7,7 @@ Desktop application for extracting structured data from scanned exam answer shee
 Build an offline-first desktop app that:
 
 - lets a teacher select PDF or image files
-- chooses student ID source mode: QR, TEXT, or AUTO
+- chooses student ID source mode: QR, BUBBLE, TEXT, or AUTO
 - extracts:
   - student_id
   - exam_id

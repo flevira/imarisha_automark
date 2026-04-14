@@ -169,6 +169,19 @@ def resolve_student_id(
             "needs_review": True,
         }
 
+    if mode == "bubble":
+        return {
+            "student_id": bubble_id,
+            "student_id_all": bubble_id if bubble_id else None,
+            "student_id_qr": qr_id,
+            "student_id_text": None,
+            "student_id_bubble": bubble_id,
+            "student_id_handwritten": handwritten_id,
+            "student_id_source": "text_bubble" if bubble_id else "missing",
+            "id_conflict": False,
+            "needs_review": bubble_id is None,
+        }
+
     detected = []
     if qr_id:
         detected.append(qr_id)

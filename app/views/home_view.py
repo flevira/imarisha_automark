@@ -36,6 +36,7 @@ def build_home_view(page: ft.Page) -> None:
         value="auto",
         options=[
             ft.dropdown.Option("qr"),
+            ft.dropdown.Option("bubble"),
             ft.dropdown.Option("text"),
             ft.dropdown.Option("auto"),
         ],

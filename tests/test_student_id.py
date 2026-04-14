@@ -46,3 +46,17 @@ def test_resolve_student_id_prefers_bubble_when_no_qr() -> None:
     assert resolved["student_id_source"] == "text_bubble"
     assert resolved["student_id_bubble"] == "00530"
     assert resolved["id_conflict"] is False
+
+
+def test_resolve_student_id_bubble_mode_uses_only_bubble() -> None:
+    resolved = resolve_student_id(
+        qr_id="12345",
+        bubble_id="00530",
+        handwritten_id="88888",
+        mode="bubble",
+    )
+    assert resolved["student_id"] == "00530"
+    assert resolved["student_id_all"] == "00530"
+    assert resolved["student_id_source"] == "text_bubble"
+    assert resolved["needs_review"] is False
+    assert resolved["id_conflict"] is False

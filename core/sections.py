@@ -104,7 +104,7 @@ def find_option_centers(page: fitz.Page, section: SectionBlock) -> dict[str, flo
 
 
 def group_words_into_lines(
-    words: list[tuple[Any, ...]], y_tolerance: float = 4.0
+    words: list[tuple[Any, ...]], y_tolerance: float = 6.0
 ) -> list[list[tuple[Any, ...]]]:
     lines: list[list[tuple[Any, ...]]] = []
     for word in sorted(words, key=lambda w: (w[1], w[0])):

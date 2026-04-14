@@ -6,6 +6,24 @@ import cv2
 import numpy as np
 
 
+def _build_qr_rois(gray: np.ndarray) -> list[np.ndarray]:
+    h, w = gray.shape
+    return [
+        # Current sheet layout: right side beside student number grid.
+        gray[int(0.08 * h) : int(0.42 * h), int(0.72 * w) : int(0.99 * w)],
+        # Right-middle fallback if scan is shifted downward.
+        gray[int(0.16 * h) : int(0.60 * h), int(0.68 * w) : int(0.99 * w)],
+        # Primary expected area from older template: header/top-right.
+        gray[int(0.02 * h) : int(0.28 * h), int(0.68 * w) : int(0.99 * w)],
+        # Slightly lower/older layout fallback.
+        gray[int(0.10 * h) : int(0.38 * h), int(0.72 * w) : int(0.98 * w)],
+        # Wider top band on right half.
+        gray[int(0.00 * h) : int(0.35 * h), int(0.55 * w) : int(1.00 * w)],
+        # Entire top band (in case of shifted placement).
+        gray[int(0.00 * h) : int(0.35 * h), :],
+    ]
+
+
 def decode_qr_robust(img_bgr: np.ndarray) -> str | None:
     detector = cv2.QRCodeDetector()
     attempts: list[np.ndarray] = []
@@ -32,17 +50,7 @@ def decode_qr_robust(img_bgr: np.ndarray) -> str | None:
         cv2.resize(gray, None, fx=2.5, fy=2.5, interpolation=cv2.INTER_CUBIC)
     )
 
-    h, w = gray.shape
-    qr_rois: list[np.ndarray] = [
-        # Primary expected area: header/top-right.
-        gray[int(0.02 * h) : int(0.28 * h), int(0.68 * w) : int(0.99 * w)],
-        # Slightly lower/older layout fallback.
-        gray[int(0.10 * h) : int(0.38 * h), int(0.72 * w) : int(0.98 * w)],
-        # Wider top band on right half.
-        gray[int(0.00 * h) : int(0.35 * h), int(0.55 * w) : int(1.00 * w)],
-        # Entire top band (in case of shifted placement).
-        gray[int(0.00 * h) : int(0.35 * h), :],
-    ]
+    qr_rois = _build_qr_rois(gray)
     for roi in qr_rois:
         if roi.size == 0:
             continue

@@ -7,17 +7,23 @@ import csv
 from datetime import datetime, timezone
 from pathlib import Path
 
-from services.extraction_service import run_extraction
+from services.extraction_service import run_extraction_with_report
 
 ENABLE_TEMP_CSV_EXPORT = True
 
 
 def build_home_view(page: ft.Page) -> None:
     page.controls.clear()
+    page.scroll = ft.ScrollMode.AUTO
 
     selected_file_paths: list[str] = []
     selected_files = ft.Text("No file selected")
     extraction_stats = ft.Text("", selectable=True, visible=False)
+    extraction_report_list = ft.ListView(
+        controls=[extraction_stats],
+        spacing=0,
+        auto_scroll=False,
+    )
     extraction_progress = ft.Row(
         controls=[
             ft.ProgressRing(width=20, height=20, stroke_width=3),
@@ -199,7 +205,7 @@ print(json.dumps(selected))
         page.update()
 
         try:
-            results = run_extraction(
+            results, workflow_report = run_extraction_with_report(
                 file_paths=selected_file_paths,
                 student_id_mode=mode_dropdown.value or "auto",
             )
@@ -228,76 +234,18 @@ print(json.dumps(selected))
                 status_message += f"\n📝 Temp CSV preview: {export_path}"
             except Exception as exc:  # pragma: no cover - temporary UI safety
                 status_message += f"\n⚠️ Could not save temp CSV preview: {exc}"
+        if workflow_report:
+            try:
+                first_file = Path(selected_file_paths[0]).expanduser().resolve()
+                timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+                report_path = first_file.parent / f"extraction_workflow_report_{timestamp}.txt"
+                report_path.write_text(workflow_report, encoding="utf-8")
+                status_message += f"\n🧭 Workflow report: {report_path}"
+            except Exception as exc:  # pragma: no cover - temporary UI safety
+                status_message += f"\n⚠️ Could not save workflow report: {exc}"
 
         selected_files.value = status_message
-        answered_rows = sum(1 for row in results if row.get("answered") == "Yes")
-        unanswered_rows = max(0, len(results) - answered_rows)
-        needs_review = sum(1 for row in results if row.get("needs_review"))
-        unique_students = len({row.get("student_id") for row in results if row.get("student_id")})
-
-        sections: dict[str, int] = {}
-        section_answered: dict[str, int] = {}
-        mode_by_page: dict[tuple[str, int], str] = {}
-        for row in results:
-            section_name = str(row.get("section") or "UNKNOWN")
-            sections[section_name] = sections.get(section_name, 0) + 1
-            if row.get("answered") == "Yes":
-                section_answered[section_name] = section_answered.get(section_name, 0) + 1
-
-            source_file = str(row.get("source_file") or "")
-            page_number = row.get("page")
-            scan_mode = str(row.get("scan_mode") or "")
-            if isinstance(page_number, int) and scan_mode:
-                mode_by_page[(source_file, page_number)] = scan_mode
-
-        section_lines: list[str] = []
-        for section_name, total in sorted(sections.items()):
-            answered = section_answered.get(section_name, 0)
-            ratio = (answered / total * 100.0) if total else 0.0
-            section_lines.append(
-                f"- {section_name}: {answered}/{total} answered ({ratio:.1f}%)"
-            )
-
-        diagnosis: list[str] = []
-        if results and answered_rows == 0:
-            diagnosis.append(
-                "- ⚠️ No bubble answers were detected at all. Section detection likely worked,"
-                " but OMR marking threshold/alignment may be failing."
-            )
-        elif results and answered_rows / max(1, len(results)) < 0.15:
-            diagnosis.append(
-                "- ⚠️ Very low answer detection rate (<15%). OMR confidence thresholds or"
-                " option-center alignment may be too strict."
-            )
-        if needs_review > 0 and needs_review / max(1, len(results)) > 0.5:
-            diagnosis.append(
-                "- ⚠️ More than half of rows require review. Bubble classification confidence"
-                " appears unstable for this run."
-            )
-        if not diagnosis:
-            diagnosis.append("- ✅ No critical OMR break pattern detected in this run.")
-
-        extraction_stats.value = "\n".join(
-            [
-                "Extraction workflow report (statistics panel disabled)",
-                "Step 1 — Input",
-                f"- Files selected: {len(selected_file_paths)}",
-                "Step 2 — Parsing",
-                f"- Parsed output rows: {len(results)}",
-                f"- Unique students resolved: {unique_students}",
-                "Step 3 — Page mode selection",
-                f"- Pages in text-layer mode: {sum(1 for mode in mode_by_page.values() if mode == 'text-layer')}",
-                f"- Pages in scanned-image mode: {sum(1 for mode in mode_by_page.values() if mode == 'scanned-image')}",
-                "Step 4 — Section + row extraction",
-                *(section_lines if section_lines else ["- No sections detected in output rows"]),
-                "Step 5 — OMR answer extraction",
-                f"- Answered rows: {answered_rows}",
-                f"- Unanswered rows: {unanswered_rows}",
-                f"- Needs review: {needs_review}",
-                "Step 6 — Diagnostic conclusion",
-                *diagnosis,
-            ]
-        )
+        extraction_stats.value = workflow_report or "No workflow report generated."
         extraction_stats.visible = True
         print(results[:5])  # debug
         page.update()
@@ -377,7 +325,8 @@ print(json.dumps(selected))
                     ),
                     ft.Container(height=12),
                     ft.Container(
-                        content=extraction_stats,
+                        content=extraction_report_list,
+                        height=320,
                         padding=12,
                         border_radius=10,
                         bgcolor=ft.Colors.WHITE,

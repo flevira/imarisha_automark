@@ -21,6 +21,7 @@ from core.student_id import (
 
 RENDER_ZOOM = 4.0
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".webp"}
+TEXT_LAYER_SKEW_FALLBACK_DEG = 2.5
 
 
 def has_usable_text_layer(page: fitz.Page) -> bool:
@@ -161,28 +162,6 @@ def align_scanned_page_to_template(img_bgr: np.ndarray) -> np.ndarray:
 
 def detect_section_blocks_scanned(img_bgr: np.ndarray) -> list[dict[str, Any]]:
     data = _ocr_data(img_bgr, psm=6)
-    lines: dict[tuple[int, int, int, int], list[str]] = {}
-    first_idx_by_line: dict[tuple[int, int, int, int], int] = {}
-
-    for i, txt in enumerate(data["text"]):
-        token = (txt or "").strip()
-        if not token:
-            continue
-        try:
-            conf = float(data["conf"][i])
-        except Exception:
-            conf = -1.0
-        if conf < 20:
-            continue
-
-        key = (
-            int(data["block_num"][i]),
-            int(data["par_num"][i]),
-            int(data["line_num"][i]),
-            int(data["page_num"][i]),
-        )
-        lines.setdefault(key, []).append(token)
-        first_idx_by_line.setdefault(key, i)
 
     def _levenshtein(a: str, b: str, max_dist: int = 2) -> int:
         if abs(len(a) - len(b)) > max_dist:
@@ -222,20 +201,51 @@ def detect_section_blocks_scanned(img_bgr: np.ndarray) -> list[dict[str, Any]]:
         return False
 
     heading_specs = [
-        ("MC", ("MULTIPLECHOICE", "MULTIPLE", "CHOICE")),
-        ("TF", ("TRUEFALSE", "TRUE", "FALSE")),
-        ("MATCH", ("MATCHING", "MATCH")),
-        ("OPEN_ENDED", ("OPENENDED", "OPEN", "ENDED")),
+        ("MC", ("MULTIPLE",)),
+        ("TF", ("TRUEFALSE",)),
+        ("MATCH", ("MATCHING",)),
+        ("OPEN_ENDED", ("OPEN",)),
     ]
 
-    found: list[tuple[str, int, int]] = []
-    for key, toks in lines.items():
-        normalized = re.sub(r"[^A-Z]", "", " ".join(toks).upper())
-        for section_type, patterns in heading_specs:
-            if any(_fuzzy_substring_match(normalized, pat) for pat in patterns):
-                idx = first_idx_by_line[key]
-                found.append((section_type, int(data["top"][idx]), int(data["left"][idx])))
-                break
+    def _find_sections(min_conf: float) -> list[tuple[str, int, int]]:
+        lines: dict[tuple[int, int, int, int], list[str]] = {}
+        first_idx_by_line: dict[tuple[int, int, int, int], int] = {}
+
+        for i, txt in enumerate(data["text"]):
+            token = (txt or "").strip()
+            if not token:
+                continue
+            try:
+                conf = float(data["conf"][i])
+            except Exception:
+                conf = -1.0
+            if conf < min_conf:
+                continue
+
+            key = (
+                int(data["block_num"][i]),
+                int(data["par_num"][i]),
+                int(data["line_num"][i]),
+                int(data["page_num"][i]),
+            )
+            lines.setdefault(key, []).append(token)
+            first_idx_by_line.setdefault(key, i)
+
+        found_sections: list[tuple[str, int, int]] = []
+        for key, toks in lines.items():
+            normalized = re.sub(r"[^A-Z]", "", " ".join(toks).upper())
+            for section_type, patterns in heading_specs:
+                if any(_fuzzy_substring_match(normalized, pat) for pat in patterns):
+                    idx = first_idx_by_line[key]
+                    found_sections.append(
+                        (section_type, int(data["top"][idx]), int(data["left"][idx]))
+                    )
+                    break
+        return found_sections
+
+    found = _find_sections(min_conf=20.0)
+    if not found:
+        found = _find_sections(min_conf=10.0)
 
     if not found:
         return []
@@ -843,7 +853,7 @@ def extract_file(file_path: str, student_id_mode: str) -> list[dict[str, Any]]:
         page_number = page_idx + 1
         use_text_layer = has_usable_text_layer(page)
         estimated_skew = _estimate_skew_correction_degrees(img_bgr)
-        if use_text_layer and abs(estimated_skew) >= 1.0:
+        if use_text_layer and abs(estimated_skew) >= TEXT_LAYER_SKEW_FALLBACK_DEG:
             # Some scanned PDFs include an OCR text layer. Their word coordinates are
             # often unreliable when the underlying scan is skewed, so force scanned
             # mode so deskew/alignment can be applied consistently.

@@ -19,7 +19,7 @@ from core.student_id import (
     resolve_student_id,
 )
 
-RENDER_ZOOM = 3.5
+RENDER_ZOOM = 4.0
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".webp"}
 
 
@@ -305,7 +305,7 @@ def extract_question_ids_from_roi(roi_bgr: np.ndarray) -> str | None:
             "--psm 6 -c tessedit_char_whitelist=0123456789",
             "--psm 7 -c tessedit_char_whitelist=0123456789",
         ],
-        min_tesseract_confidence=58.0,
+        min_tesseract_confidence=50.0,
     )
     return match.text if match else None
 
@@ -324,7 +324,7 @@ def extract_item_numbers_from_roi(roi_bgr: np.ndarray) -> int | None:
             "--psm 6 -c tessedit_char_whitelist=1234",
             "--psm 7 -c tessedit_char_whitelist=1234",
         ],
-        min_tesseract_confidence=50.0,
+        min_tesseract_confidence=44.0,
     )
     return int(match.text) if match else None
 
@@ -357,7 +357,7 @@ def extract_rows_for_section_scanned(
     smooth_kernel = np.ones(smooth_window, dtype=np.float32) / smooth_window
     projection_smoothed = np.convolve(projection, smooth_kernel, mode="same")
 
-    threshold = max(8.0, float(np.percentile(projection_smoothed, 45)))
+    threshold = max(6.0, float(np.percentile(projection_smoothed, 35)))
     active = projection_smoothed > threshold
 
     bands: list[tuple[int, int]] = []
@@ -366,10 +366,10 @@ def extract_rows_for_section_scanned(
         if flag and start is None:
             start = i
         elif (not flag) and start is not None:
-            if i - start >= 6:
+            if i - start >= 5:
                 bands.append((start, i))
             start = None
-    if start is not None and (len(active) - start) >= 6:
+    if start is not None and (len(active) - start) >= 5:
         bands.append((start, len(active) - 1))
 
     if not bands:

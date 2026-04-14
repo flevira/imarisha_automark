@@ -120,7 +120,7 @@ def extract_student_id_bubble(img_bgr: np.ndarray) -> tuple[str | None, bool]:
         sorted_scores = sorted(col_scores, reverse=True)
         top = sorted_scores[0]
         second = sorted_scores[1] if len(sorted_scores) > 1 else 0.0
-        if top < 35.0 or (top - second) < 4.0:
+        if top < 30.0 or (top - second) < 3.0:
             low_conf = True
         digits.append(str(best_idx))
 

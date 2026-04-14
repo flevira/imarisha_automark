@@ -4,4 +4,5 @@ pymupdf
 opencv-python-headless
 pandas
 pytesseract
+easyocr
 pillow

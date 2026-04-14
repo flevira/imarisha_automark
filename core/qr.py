@@ -33,10 +33,21 @@ def decode_qr_robust(img_bgr: np.ndarray) -> str | None:
     )
 
     h, w = gray.shape
-    qr_crop = gray[int(0.10 * h) : int(0.38 * h), int(0.72 * w) : int(0.98 * w)]
-    attempts.append(
-        cv2.resize(qr_crop, None, fx=3.0, fy=3.0, interpolation=cv2.INTER_CUBIC)
+    qr_rois = (
+        # Legacy location: header top-right.
+        (0.10, 0.38, 0.72, 0.98),
+        # New layout: below student info (name + student id), still on right side.
+        (0.26, 0.56, 0.60, 0.98),
+        # Slightly lower fallback for scan variance.
+        (0.34, 0.68, 0.58, 0.98),
     )
+    for y0, y1, x0, x1 in qr_rois:
+        qr_crop = gray[int(y0 * h) : int(y1 * h), int(x0 * w) : int(x1 * w)]
+        if qr_crop.size == 0:
+            continue
+        attempts.append(
+            cv2.resize(qr_crop, None, fx=3.0, fy=3.0, interpolation=cv2.INTER_CUBIC)
+        )
 
     for attempt in attempts:
         data, _, _ = detector.detectAndDecode(attempt)

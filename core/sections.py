@@ -20,12 +20,9 @@ def search_text_rects(page: fitz.Page, phrase: str) -> list[fitz.Rect]:
 def detect_section_blocks(page: fitz.Page) -> list[SectionBlock]:
     heading_specs = [
         ("MC", "MULTIPLE"),
-        ("MC", "MULTIPLE CHOICE"),
         ("TF", "TRUEFALSE"),
-        ("TF", "TRUE / FALSE"),
         ("MATCH", "MATCHING"),
         ("OPEN_ENDED", "OPEN"),
-        ("OPEN_ENDED", "OPEN ENDED"),
     ]
 
     found: list[tuple[str, fitz.Rect]] = []

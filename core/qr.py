@@ -53,6 +53,7 @@ def parse_qr_data(data: str | None) -> dict[str, Any]:
         "examid": None,
         "testid": None,
         "assessmentid": None,
+        "studentname": None,
     }
     if not data:
         return parsed

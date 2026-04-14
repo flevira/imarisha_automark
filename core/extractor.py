@@ -759,6 +759,7 @@ def extract_file(file_path: str, student_id_mode: str) -> list[dict[str, Any]]:
                     "sheet_type": None,
                     "exam_id": None,
                     "test_id": None,
+                    "studentName": None,
                     "section": None,
                     "question_id": None,
                     "item_number": None,
@@ -777,6 +778,7 @@ def extract_file(file_path: str, student_id_mode: str) -> list[dict[str, Any]]:
 
         qr_parsed = parse_qr_data(qr_raw)
         qr_student_id = qr_parsed.get("studentid")
+        qr_student_name = qr_parsed.get("studentname")
         qr_type = (qr_parsed.get("type") or "").upper() or None
 
         exam_id = None
@@ -809,6 +811,7 @@ def extract_file(file_path: str, student_id_mode: str) -> list[dict[str, Any]]:
             "sheet_type": qr_type,
             "exam_id": exam_id if qr_type == "EXAM" else None,
             "test_id": test_id if qr_type == "TEST" else None,
+            "studentName": qr_student_name,
             "qr_raw": qr_raw,
             "source_file": file_path,
             **quality_metrics,

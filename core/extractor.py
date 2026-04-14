@@ -333,6 +333,12 @@ def extract_rows_for_section_scanned(
         return []
 
     section_roi = img_bgr[y0:y1, x0:x1]
+    data_start_offset = _find_scanned_table_header_bottom(section_roi)
+    if data_start_offset is not None and data_start_offset > 0:
+        y0 = min(y1, y0 + data_start_offset)
+        section_roi = img_bgr[y0:y1, x0:x1]
+        if section_roi.size == 0:
+            return []
     gray = cv2.cvtColor(section_roi, cv2.COLOR_BGR2GRAY)
     _, bw = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
 
@@ -441,6 +447,53 @@ def extract_rows_for_section_scanned(
     return rows
 
 
+def _find_scanned_table_header_bottom(section_roi_bgr: np.ndarray) -> int | None:
+    if section_roi_bgr.size == 0:
+        return None
+
+    data = _ocr_data(section_roi_bgr, psm=6)
+    lines: dict[tuple[int, int, int, int], list[tuple[str, int, int]]] = {}
+
+    for i, txt in enumerate(data["text"]):
+        token = (txt or "").strip()
+        if not token:
+            continue
+        try:
+            conf = float(data["conf"][i])
+        except Exception:
+            conf = -1.0
+        if conf < 15:
+            continue
+
+        key = (
+            int(data["block_num"][i]),
+            int(data["par_num"][i]),
+            int(data["line_num"][i]),
+            int(data["page_num"][i]),
+        )
+        top = int(data["top"][i])
+        height = int(data["height"][i])
+        lines.setdefault(key, []).append((token.upper(), top, height))
+
+    best_bottom: int | None = None
+    for words in lines.values():
+        tokens = [re.sub(r"[^A-Z0-9]", "", word) for word, *_ in words]
+        normalized = " ".join(t for t in tokens if t)
+        has_qid = ("QID" in normalized) or ("NO" in normalized)
+        has_option = any(opt in normalized for opt in ("A", "B", "C", "D", "T", "F", "ITEM"))
+        if not (has_qid and has_option):
+            continue
+
+        line_bottom = max(top + h for _, top, h in words)
+        if best_bottom is None or line_bottom > best_bottom:
+            best_bottom = line_bottom
+
+    if best_bottom is None:
+        return None
+
+    return max(0, best_bottom + 8)
+
+
 def _dedupe_scanned_row_candidates(
     rows: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
@@ -511,6 +564,15 @@ def _find_option_centers_scanned(
     if x1_px <= x0_px:
         return {}
 
+    ocr_centers = _find_option_centers_scanned_from_header_ocr(
+        img_bgr=img_bgr,
+        section=section,
+        labels=labels,
+        sx=(img_bgr.shape[1] / page.rect.width),
+    )
+    if ocr_centers:
+        return ocr_centers
+
     left_margin = 0.06
     usable_width = 0.88
     col_width = usable_width / total_cols
@@ -542,6 +604,52 @@ def _find_option_centers_scanned(
         centers[lbl] = best_x / sx
 
     return centers
+
+
+def _find_option_centers_scanned_from_header_ocr(
+    img_bgr: np.ndarray,
+    section: dict[str, Any],
+    labels: list[str],
+    sx: float,
+) -> dict[str, float]:
+    x0_px = max(0, int(section.get("x0_px", 0)))
+    x1_px = min(img_bgr.shape[1], int(section.get("x1_px", img_bgr.shape[1])))
+    y0_px = max(0, int(section.get("y0_px", 0)))
+    y1_px = min(img_bgr.shape[0], int(section.get("y1_px", img_bgr.shape[0])))
+    if x1_px <= x0_px or y1_px <= y0_px:
+        return {}
+
+    header_h = max(40, min(180, int((y1_px - y0_px) * 0.22)))
+    header_roi = img_bgr[y0_px : min(y1_px, y0_px + header_h), x0_px:x1_px]
+    if header_roi.size == 0:
+        return {}
+
+    data = _ocr_data(header_roi, psm=6)
+    candidates: dict[str, list[float]] = {label: [] for label in labels}
+    for i, txt in enumerate(data["text"]):
+        token = (txt or "").strip().upper()
+        if token not in candidates:
+            continue
+        try:
+            conf = float(data["conf"][i])
+        except Exception:
+            conf = -1.0
+        if conf < 20:
+            continue
+        left = int(data["left"][i])
+        width = int(data["width"][i])
+        center_px = x0_px + left + (width / 2.0)
+        candidates[token].append(center_px / sx)
+
+    resolved: dict[str, float] = {}
+    for label in labels:
+        vals = candidates.get(label) or []
+        if vals:
+            resolved[label] = float(np.median(vals))
+
+    if len(resolved) == len(labels):
+        return resolved
+    return {}
 
 
 def _rows_px_to_page(
@@ -744,39 +852,7 @@ def extract_file(file_path: str, student_id_mode: str) -> list[dict[str, Any]]:
         )
 
         qr_raw = decode_qr_robust(img_bgr)
-        if not qr_raw:
-            all_rows.append(
-                {
-                    "page": page_number,
-                    "student_id": None,
-                    "student_id_all": None,
-                    "student_id_qr": None,
-                    "student_id_text": None,
-                    "student_id_bubble": None,
-                    "student_id_handwritten": None,
-                    "student_id_source": "missing",
-                    "id_conflict": False,
-                    "sheet_type": None,
-                    "exam_id": None,
-                    "test_id": None,
-                    "studentName": None,
-                    "section": None,
-                    "question_id": None,
-                    "item_number": None,
-                    "answer": None,
-                    "answered": "No",
-                    "matching_pair": None,
-                    "manual_marking": False,
-                    "needs_review": True,
-                    "score_debug": None,
-                    "qr_raw": None,
-                    "source_file": file_path,
-                    **quality_metrics,
-                }
-            )
-            continue
-
-        qr_parsed = parse_qr_data(qr_raw)
+        qr_parsed = parse_qr_data(qr_raw) if qr_raw else {}
         qr_student_id = qr_parsed.get("studentid")
         qr_student_name = qr_parsed.get("studentname")
         qr_type = (qr_parsed.get("type") or "").upper() or None

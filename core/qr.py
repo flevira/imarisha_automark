@@ -33,10 +33,22 @@ def decode_qr_robust(img_bgr: np.ndarray) -> str | None:
     )
 
     h, w = gray.shape
-    qr_crop = gray[int(0.10 * h) : int(0.38 * h), int(0.72 * w) : int(0.98 * w)]
-    attempts.append(
-        cv2.resize(qr_crop, None, fx=3.0, fy=3.0, interpolation=cv2.INTER_CUBIC)
-    )
+    qr_rois: list[np.ndarray] = [
+        # Primary expected area: header/top-right.
+        gray[int(0.02 * h) : int(0.28 * h), int(0.68 * w) : int(0.99 * w)],
+        # Slightly lower/older layout fallback.
+        gray[int(0.10 * h) : int(0.38 * h), int(0.72 * w) : int(0.98 * w)],
+        # Wider top band on right half.
+        gray[int(0.00 * h) : int(0.35 * h), int(0.55 * w) : int(1.00 * w)],
+        # Entire top band (in case of shifted placement).
+        gray[int(0.00 * h) : int(0.35 * h), :],
+    ]
+    for roi in qr_rois:
+        if roi.size == 0:
+            continue
+        attempts.append(cv2.resize(roi, None, fx=3.0, fy=3.0, interpolation=cv2.INTER_CUBIC))
+        _, roi_otsu = cv2.threshold(roi, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        attempts.append(cv2.resize(roi_otsu, None, fx=3.0, fy=3.0, interpolation=cv2.INTER_CUBIC))
 
     for attempt in attempts:
         data, _, _ = detector.detectAndDecode(attempt)

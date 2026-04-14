@@ -255,10 +255,20 @@ def detect_section_blocks_scanned(img_bgr: np.ndarray) -> list[dict[str, Any]]:
         if not column_items:
             return []
         column_items.sort(key=lambda x: x[1])
+        deduped: list[tuple[str, int, int]] = []
+        for section_type, y_top, x_left in column_items:
+            if (
+                deduped
+                and section_type == deduped[-1][0]
+                and abs(y_top - deduped[-1][1]) <= 16
+            ):
+                continue
+            deduped.append((section_type, y_top, x_left))
+
         col_blocks: list[dict[str, Any]] = []
-        for idx, (section_type, y_top, _) in enumerate(column_items):
+        for idx, (section_type, y_top, _) in enumerate(deduped):
             y0 = max(0, y_top + 20)
-            y1 = column_items[idx + 1][1] - 8 if idx + 1 < len(column_items) else h - 10
+            y1 = deduped[idx + 1][1] - 8 if idx + 1 < len(deduped) else h - 10
             if y1 > y0 + 10:
                 col_blocks.append(
                     {

@@ -333,6 +333,12 @@ def extract_rows_for_section_scanned(
         return []
 
     section_roi = img_bgr[y0:y1, x0:x1]
+    data_start_offset = _find_scanned_table_header_bottom(section_roi)
+    if data_start_offset is not None and data_start_offset > 0:
+        y0 = min(y1, y0 + data_start_offset)
+        section_roi = img_bgr[y0:y1, x0:x1]
+        if section_roi.size == 0:
+            return []
     gray = cv2.cvtColor(section_roi, cv2.COLOR_BGR2GRAY)
     _, bw = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
 
@@ -439,6 +445,53 @@ def extract_rows_for_section_scanned(
         f"(missing question_id: {missing_qid})"
     )
     return rows
+
+
+def _find_scanned_table_header_bottom(section_roi_bgr: np.ndarray) -> int | None:
+    if section_roi_bgr.size == 0:
+        return None
+
+    data = _ocr_data(section_roi_bgr, psm=6)
+    lines: dict[tuple[int, int, int, int], list[tuple[str, int, int]]] = {}
+
+    for i, txt in enumerate(data["text"]):
+        token = (txt or "").strip()
+        if not token:
+            continue
+        try:
+            conf = float(data["conf"][i])
+        except Exception:
+            conf = -1.0
+        if conf < 15:
+            continue
+
+        key = (
+            int(data["block_num"][i]),
+            int(data["par_num"][i]),
+            int(data["line_num"][i]),
+            int(data["page_num"][i]),
+        )
+        top = int(data["top"][i])
+        height = int(data["height"][i])
+        lines.setdefault(key, []).append((token.upper(), top, height))
+
+    best_bottom: int | None = None
+    for words in lines.values():
+        tokens = [re.sub(r"[^A-Z0-9]", "", word) for word, *_ in words]
+        normalized = " ".join(t for t in tokens if t)
+        has_qid = ("QID" in normalized) or ("NO" in normalized)
+        has_option = any(opt in normalized for opt in ("A", "B", "C", "D", "T", "F", "ITEM"))
+        if not (has_qid and has_option):
+            continue
+
+        line_bottom = max(top + h for _, top, h in words)
+        if best_bottom is None or line_bottom > best_bottom:
+            best_bottom = line_bottom
+
+    if best_bottom is None:
+        return None
+
+    return max(0, best_bottom + 8)
 
 
 def _dedupe_scanned_row_candidates(

@@ -7,17 +7,23 @@ import csv
 from datetime import datetime, timezone
 from pathlib import Path
 
-from services.extraction_service import run_extraction
+from services.extraction_service import run_extraction_with_report
 
 ENABLE_TEMP_CSV_EXPORT = True
 
 
 def build_home_view(page: ft.Page) -> None:
     page.controls.clear()
+    page.scroll = ft.ScrollMode.AUTO
 
     selected_file_paths: list[str] = []
     selected_files = ft.Text("No file selected")
     extraction_stats = ft.Text("", selectable=True, visible=False)
+    extraction_report_list = ft.ListView(
+        controls=[extraction_stats],
+        spacing=0,
+        auto_scroll=False,
+    )
     extraction_progress = ft.Row(
         controls=[
             ft.ProgressRing(width=20, height=20, stroke_width=3),
@@ -199,7 +205,7 @@ print(json.dumps(selected))
         page.update()
 
         try:
-            results = run_extraction(
+            results, workflow_report = run_extraction_with_report(
                 file_paths=selected_file_paths,
                 student_id_mode=mode_dropdown.value or "auto",
             )
@@ -228,151 +234,18 @@ print(json.dumps(selected))
                 status_message += f"\n📝 Temp CSV preview: {export_path}"
             except Exception as exc:  # pragma: no cover - temporary UI safety
                 status_message += f"\n⚠️ Could not save temp CSV preview: {exc}"
+        if workflow_report:
+            try:
+                first_file = Path(selected_file_paths[0]).expanduser().resolve()
+                timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+                report_path = first_file.parent / f"extraction_workflow_report_{timestamp}.txt"
+                report_path.write_text(workflow_report, encoding="utf-8")
+                status_message += f"\n🧭 Workflow report: {report_path}"
+            except Exception as exc:  # pragma: no cover - temporary UI safety
+                status_message += f"\n⚠️ Could not save workflow report: {exc}"
 
         selected_files.value = status_message
-        needs_review = sum(1 for row in results if row.get("needs_review"))
-        manual_marking = sum(1 for row in results if row.get("manual_marking"))
-        unique_students = len({row.get("student_id") for row in results if row.get("student_id")})
-        sections: dict[str, int] = {}
-        for row in results:
-            section_name = str(row.get("section") or "UNKNOWN")
-            sections[section_name] = sections.get(section_name, 0) + 1
-
-        page_quality: dict[tuple[str, int], dict] = {}
-        for row in results:
-            source_file = str(row.get("source_file") or "")
-            page_number_raw = row.get("page")
-            if not isinstance(page_number_raw, int):
-                continue
-            page_key = (source_file, page_number_raw)
-            if page_key not in page_quality:
-                page_quality[page_key] = row
-
-        quality_scores = [
-            float(page.get("scan_quality_score"))
-            for page in page_quality.values()
-            if isinstance(page.get("scan_quality_score"), (int, float))
-        ]
-        brightness_values = [
-            float(page.get("scan_brightness_mean"))
-            for page in page_quality.values()
-            if isinstance(page.get("scan_brightness_mean"), (int, float))
-        ]
-        contrast_values = [
-            float(page.get("scan_contrast_std"))
-            for page in page_quality.values()
-            if isinstance(page.get("scan_contrast_std"), (int, float))
-        ]
-        blur_values = [
-            float(page.get("scan_blur_laplacian_var"))
-            for page in page_quality.values()
-            if isinstance(page.get("scan_blur_laplacian_var"), (int, float))
-        ]
-        skew_values = [
-            float(page.get("scan_estimated_skew_deg"))
-            for page in page_quality.values()
-            if isinstance(page.get("scan_estimated_skew_deg"), (int, float))
-        ]
-        poor_pages = sum(
-            1 for page in page_quality.values() if str(page.get("scan_quality_band")) == "poor"
-        )
-        fair_pages = sum(
-            1 for page in page_quality.values() if str(page.get("scan_quality_band")) == "fair"
-        )
-        good_pages = sum(
-            1 for page in page_quality.values() if str(page.get("scan_quality_band")) == "good"
-        )
-        avg_quality = round(sum(quality_scores) / len(quality_scores), 1) if quality_scores else None
-        avg_brightness = (
-            round(sum(brightness_values) / len(brightness_values), 1) if brightness_values else None
-        )
-        avg_contrast = round(sum(contrast_values) / len(contrast_values), 1) if contrast_values else None
-        avg_blur = round(sum(blur_values) / len(blur_values), 1) if blur_values else None
-        avg_skew = round(sum(skew_values) / len(skew_values), 2) if skew_values else None
-
-        def metric_line(
-            label: str,
-            value: float | None,
-            min_value: float,
-            max_value: float,
-            unit: str = "",
-            low_comment: str = "",
-            high_comment: str = "",
-        ) -> str:
-            range_label = f"({min_value:g} - {max_value:g}{unit})"
-            if value is None:
-                return f"- {label}: n/a {range_label}"
-            if value < min_value:
-                return (
-                    f"- {label}: {value}{unit} {range_label} 🔴 OUT OF RANGE "
-                    f"(too low: {low_comment})"
-                )
-            if value > max_value:
-                return (
-                    f"- {label}: {value}{unit} {range_label} 🔴 OUT OF RANGE "
-                    f"(too high: {high_comment})"
-                )
-            return f"- {label}: {value}{unit} {range_label} ✅ In range"
-
-        section_lines = [f"- {name}: {count}" for name, count in sorted(sections.items())]
-        quality_lines = (
-            [
-                f"- Pages analyzed for quality: {len(page_quality)}",
-                f"- Average scan quality score: {avg_quality}/100",
-                metric_line(
-                    "Combined brightness mean",
-                    avg_brightness,
-                    80.0,
-                    220.0,
-                    low_comment="scan is underexposed; increase lighting or scanner exposure",
-                    high_comment="scan is overexposed; reduce brightness/exposure",
-                ),
-                metric_line(
-                    "Combined contrast std",
-                    avg_contrast,
-                    35.0,
-                    85.0,
-                    low_comment="image is too flat; increase contrast settings",
-                    high_comment="image may be harsh/noisy; reduce contrast enhancement",
-                ),
-                metric_line(
-                    "Combined blur proxy",
-                    avg_blur,
-                    120.0,
-                    1000.0,
-                    low_comment="scan is blurry; improve focus/stability",
-                    high_comment="very sharp/noisy edges; verify no over-sharpening",
-                ),
-                metric_line(
-                    "Combined estimated skew",
-                    avg_skew,
-                    -1.0,
-                    1.0,
-                    unit="°",
-                    low_comment="pages are tilted clockwise; align paper before scanning",
-                    high_comment="pages are tilted counter-clockwise; align paper before scanning",
-                ),
-                f"- Good scans: {good_pages}",
-                f"- Fair scans: {fair_pages}",
-                f"- Poor scans: {poor_pages}",
-            ]
-            if page_quality
-            else ["- Scan quality unavailable"]
-        )
-
-        extraction_stats.value = "\n".join(
-            [
-                "Review statistics",
-                f"- Total extracted rows: {len(results)}",
-                f"- Rows flagged for review: {needs_review}",
-                f"- Rows requiring manual marking: {manual_marking}",
-                f"- Unique students: {unique_students}",
-                "- Scan quality:",
-                *quality_lines,
-                "- Section counts:",
-                *(section_lines if section_lines else ["- (none)"]),
-            ]
-        )
+        extraction_stats.value = workflow_report or "No workflow report generated."
         extraction_stats.visible = True
         print(results[:5])  # debug
         page.update()
@@ -452,7 +325,8 @@ print(json.dumps(selected))
                     ),
                     ft.Container(height=12),
                     ft.Container(
-                        content=extraction_stats,
+                        content=extraction_report_list,
+                        height=320,
                         padding=12,
                         border_radius=10,
                         bgcolor=ft.Colors.WHITE,

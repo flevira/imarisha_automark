@@ -843,9 +843,54 @@ def _open_file_as_document(file_path: str) -> fitz.Document:
     return doc
 
 
-def extract_file(file_path: str, student_id_mode: str) -> list[dict[str, Any]]:
+def _format_extraction_report(
+    file_path: str,
+    page_reports: list[dict[str, Any]],
+    total_rows: int,
+) -> str:
+    lines: list[str] = [
+        f"Workflow report for: {file_path}",
+        f"- Pages processed: {len(page_reports)}",
+        f"- Output rows: {total_rows}",
+        "",
+    ]
+    for page_report in page_reports:
+        page_no = page_report["page"]
+        lines.extend(
+            [
+                f"Page {page_no}",
+                f"  1) Mode: {page_report['mode']}",
+                f"  2) Sections detected: {page_report['sections_detected_total']} "
+                f"(usable: {page_report['sections_used']})",
+                f"  3) Rows detected before OMR: {page_report['rows_detected_total']}",
+                f"  4) OMR answers detected: {page_report['answers_detected_total']}",
+                f"  5) Unanswered rows after OMR: {page_report['rows_unanswered_total']}",
+                f"  6) Rows flagged for review: {page_report['rows_needing_review_total']}",
+            ]
+        )
+
+        section_debug = page_report.get("section_debug", [])
+        if section_debug:
+            lines.append("  Section breakdown:")
+            for item in section_debug:
+                lines.append(
+                    "    - "
+                    f"{item['section_type']}: rows={item['rows_detected']}, "
+                    f"answered={item['answers_detected']}, "
+                    f"missing_qid={item['rows_missing_question_id']}, "
+                    f"missing_option_centers={item['missing_option_centers']}"
+                )
+        lines.append("")
+
+    return "\n".join(lines).strip()
+
+
+def extract_file_with_report(
+    file_path: str, student_id_mode: str
+) -> tuple[list[dict[str, Any]], str]:
     doc = _open_file_as_document(file_path)
     all_rows: list[dict[str, Any]] = []
+    page_reports: list[dict[str, Any]] = []
 
     for page_idx in range(len(doc)):
         page = doc[page_idx]
@@ -918,10 +963,22 @@ def extract_file(file_path: str, student_id_mode: str) -> list[dict[str, Any]]:
             if use_text_layer
             else detect_section_blocks_scanned(img_bgr)
         )
+        page_report: dict[str, Any] = {
+            "page": page_number,
+            "mode": "text-layer" if use_text_layer else "scanned-image",
+            "sections_detected_total": len(sections),
+            "sections_used": 0,
+            "rows_detected_total": 0,
+            "answers_detected_total": 0,
+            "rows_unanswered_total": 0,
+            "rows_needing_review_total": 0,
+            "section_debug": [],
+        }
 
         for section in sections:
             if section["section_type"] == "OPEN_ENDED":
                 continue
+            page_report["sections_used"] += 1
 
             if use_text_layer:
                 option_centers = find_option_centers(page, section)
@@ -932,6 +989,21 @@ def extract_file(file_path: str, student_id_mode: str) -> list[dict[str, Any]]:
                     extract_rows_for_section_scanned(img_bgr, section), page, img_bgr
                 )
 
+            section_answers = 0
+            section_unanswered = 0
+            section_review = 0
+            rows_missing_question_id = 0
+            if section["section_type"] == "MC":
+                expected_labels = {"A", "B", "C", "D"}
+            elif section["section_type"] == "TF":
+                expected_labels = {"T", "F"}
+            elif section["section_type"] == "MATCH":
+                expected_labels = {"A", "B", "C", "D"}
+            else:
+                expected_labels = set()
+            missing_option_centers = sorted(expected_labels - set(option_centers.keys()))
+
+            page_report["rows_detected_total"] += len(rows)
             for row in rows:
                 answers, row_review, scores = extract_row_answers(
                     page=page,
@@ -944,6 +1016,17 @@ def extract_file(file_path: str, student_id_mode: str) -> list[dict[str, Any]]:
                 review_flag = (
                     row_review or id_info["needs_review"] or (row["question_id"] is None)
                 )
+                if row["question_id"] is None:
+                    rows_missing_question_id += 1
+                if answers:
+                    section_answers += 1
+                    page_report["answers_detected_total"] += 1
+                else:
+                    section_unanswered += 1
+                    page_report["rows_unanswered_total"] += 1
+                if review_flag:
+                    section_review += 1
+                    page_report["rows_needing_review_total"] += 1
 
                 append_output_rows(
                     output_rows=all_rows,
@@ -953,6 +1036,31 @@ def extract_file(file_path: str, student_id_mode: str) -> list[dict[str, Any]]:
                     needs_review=review_flag,
                     scores=scores,
                 )
+            page_report["section_debug"].append(
+                {
+                    "section_type": section["section_type"],
+                    "rows_detected": len(rows),
+                    "answers_detected": section_answers,
+                    "rows_unanswered": section_unanswered,
+                    "rows_missing_question_id": rows_missing_question_id,
+                    "rows_needing_review": section_review,
+                    "missing_option_centers": ",".join(missing_option_centers)
+                    if missing_option_centers
+                    else "none",
+                }
+            )
+        page_reports.append(page_report)
 
     doc.close()
-    return _sorted_rows(all_rows)
+    sorted_rows = _sorted_rows(all_rows)
+    report_text = _format_extraction_report(
+        file_path=file_path,
+        page_reports=page_reports,
+        total_rows=len(sorted_rows),
+    )
+    return sorted_rows, report_text
+
+
+def extract_file(file_path: str, student_id_mode: str) -> list[dict[str, Any]]:
+    rows, _ = extract_file_with_report(file_path=file_path, student_id_mode=student_id_mode)
+    return rows

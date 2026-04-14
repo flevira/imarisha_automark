@@ -31,23 +31,37 @@ def extract_rows_for_section(page: fitz.Page, section: dict[str, Any]) -> list[R
 
     rows: list[RowData] = []
 
-    for line in lines:
+    header_markers = (
+        "NO QID A B C D",
+        "QID A B C D",
+        "NO QID T F",
+        "QID T F",
+        "NO QID ITEM A B C D",
+        "QID ITEM A B C D",
+        "QUESTION STUDENT ANSWER",
+        "NO QID STUDENT ANSWER",
+    )
+
+    header_idx: int | None = None
+    for idx, line in enumerate(lines):
+        texts = [w[4].strip() for w in line if w[4].strip()]
+        if not texts:
+            continue
+        joined = " ".join(texts).upper()
+        if any(marker in joined for marker in header_markers):
+            header_idx = idx
+            break
+
+    candidate_lines = lines[header_idx + 1 :] if header_idx is not None else lines
+
+    for line in candidate_lines:
         texts = [w[4].strip() for w in line if w[4].strip()]
         if not texts:
             continue
 
         joined = " ".join(texts).upper()
 
-        if (
-            "NO QID A B C D" in joined
-            or "QID A B C D" in joined
-            or "NO QID T F" in joined
-            or "QID T F" in joined
-            or "NO QID ITEM A B C D" in joined
-            or "QID ITEM A B C D" in joined
-            or "QUESTION STUDENT ANSWER" in joined
-            or "NO QID STUDENT ANSWER" in joined
-        ):
+        if any(marker in joined for marker in header_markers):
             continue
 
         xs = [w[0] for w in line]

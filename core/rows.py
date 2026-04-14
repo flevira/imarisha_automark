@@ -98,4 +98,39 @@ def extract_rows_for_section(page: fitz.Page, section: dict[str, Any]) -> list[R
                     }
                 )
 
-    return rows
+    return _dedupe_text_row_candidates(rows)
+
+
+def _dedupe_text_row_candidates(rows: list[RowData]) -> list[RowData]:
+    if not rows:
+        return []
+
+    deduped: dict[tuple[str, str, int | None], RowData] = {}
+    passthrough: list[RowData] = []
+
+    for row in rows:
+        section_type = str(row.get("section_type") or "")
+        qid = row.get("question_id")
+        item_number = row.get("item_number")
+
+        if not qid:
+            passthrough.append(row)
+            continue
+
+        if section_type in {"MC", "TF", "OPEN_ENDED"}:
+            dedupe_key = (section_type, str(qid), None)
+        else:
+            dedupe_key = (section_type, str(qid), item_number)
+
+        current = deduped.get(dedupe_key)
+        if current is None:
+            deduped[dedupe_key] = row
+            continue
+
+        curr_h = float(current["row_bbox"][3] - current["row_bbox"][1])
+        new_h = float(row["row_bbox"][3] - row["row_bbox"][1])
+        if new_h > curr_h:
+            deduped[dedupe_key] = row
+
+    combined = [*deduped.values(), *passthrough]
+    return sorted(combined, key=lambda r: float(r.get("y_center", 0.0)))

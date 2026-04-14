@@ -230,147 +230,72 @@ print(json.dumps(selected))
                 status_message += f"\n⚠️ Could not save temp CSV preview: {exc}"
 
         selected_files.value = status_message
+        answered_rows = sum(1 for row in results if row.get("answered") == "Yes")
+        unanswered_rows = max(0, len(results) - answered_rows)
         needs_review = sum(1 for row in results if row.get("needs_review"))
-        manual_marking = sum(1 for row in results if row.get("manual_marking"))
         unique_students = len({row.get("student_id") for row in results if row.get("student_id")})
+
         sections: dict[str, int] = {}
+        section_answered: dict[str, int] = {}
+        mode_by_page: dict[tuple[str, int], str] = {}
         for row in results:
             section_name = str(row.get("section") or "UNKNOWN")
             sections[section_name] = sections.get(section_name, 0) + 1
+            if row.get("answered") == "Yes":
+                section_answered[section_name] = section_answered.get(section_name, 0) + 1
 
-        page_quality: dict[tuple[str, int], dict] = {}
-        for row in results:
             source_file = str(row.get("source_file") or "")
-            page_number_raw = row.get("page")
-            if not isinstance(page_number_raw, int):
-                continue
-            page_key = (source_file, page_number_raw)
-            if page_key not in page_quality:
-                page_quality[page_key] = row
+            page_number = row.get("page")
+            scan_mode = str(row.get("scan_mode") or "")
+            if isinstance(page_number, int) and scan_mode:
+                mode_by_page[(source_file, page_number)] = scan_mode
 
-        quality_scores = [
-            float(page.get("scan_quality_score"))
-            for page in page_quality.values()
-            if isinstance(page.get("scan_quality_score"), (int, float))
-        ]
-        brightness_values = [
-            float(page.get("scan_brightness_mean"))
-            for page in page_quality.values()
-            if isinstance(page.get("scan_brightness_mean"), (int, float))
-        ]
-        contrast_values = [
-            float(page.get("scan_contrast_std"))
-            for page in page_quality.values()
-            if isinstance(page.get("scan_contrast_std"), (int, float))
-        ]
-        blur_values = [
-            float(page.get("scan_blur_laplacian_var"))
-            for page in page_quality.values()
-            if isinstance(page.get("scan_blur_laplacian_var"), (int, float))
-        ]
-        skew_values = [
-            float(page.get("scan_estimated_skew_deg"))
-            for page in page_quality.values()
-            if isinstance(page.get("scan_estimated_skew_deg"), (int, float))
-        ]
-        poor_pages = sum(
-            1 for page in page_quality.values() if str(page.get("scan_quality_band")) == "poor"
-        )
-        fair_pages = sum(
-            1 for page in page_quality.values() if str(page.get("scan_quality_band")) == "fair"
-        )
-        good_pages = sum(
-            1 for page in page_quality.values() if str(page.get("scan_quality_band")) == "good"
-        )
-        avg_quality = round(sum(quality_scores) / len(quality_scores), 1) if quality_scores else None
-        avg_brightness = (
-            round(sum(brightness_values) / len(brightness_values), 1) if brightness_values else None
-        )
-        avg_contrast = round(sum(contrast_values) / len(contrast_values), 1) if contrast_values else None
-        avg_blur = round(sum(blur_values) / len(blur_values), 1) if blur_values else None
-        avg_skew = round(sum(skew_values) / len(skew_values), 2) if skew_values else None
+        section_lines: list[str] = []
+        for section_name, total in sorted(sections.items()):
+            answered = section_answered.get(section_name, 0)
+            ratio = (answered / total * 100.0) if total else 0.0
+            section_lines.append(
+                f"- {section_name}: {answered}/{total} answered ({ratio:.1f}%)"
+            )
 
-        def metric_line(
-            label: str,
-            value: float | None,
-            min_value: float,
-            max_value: float,
-            unit: str = "",
-            low_comment: str = "",
-            high_comment: str = "",
-        ) -> str:
-            range_label = f"({min_value:g} - {max_value:g}{unit})"
-            if value is None:
-                return f"- {label}: n/a {range_label}"
-            if value < min_value:
-                return (
-                    f"- {label}: {value}{unit} {range_label} 🔴 OUT OF RANGE "
-                    f"(too low: {low_comment})"
-                )
-            if value > max_value:
-                return (
-                    f"- {label}: {value}{unit} {range_label} 🔴 OUT OF RANGE "
-                    f"(too high: {high_comment})"
-                )
-            return f"- {label}: {value}{unit} {range_label} ✅ In range"
-
-        section_lines = [f"- {name}: {count}" for name, count in sorted(sections.items())]
-        quality_lines = (
-            [
-                f"- Pages analyzed for quality: {len(page_quality)}",
-                f"- Average scan quality score: {avg_quality}/100",
-                metric_line(
-                    "Combined brightness mean",
-                    avg_brightness,
-                    80.0,
-                    220.0,
-                    low_comment="scan is underexposed; increase lighting or scanner exposure",
-                    high_comment="scan is overexposed; reduce brightness/exposure",
-                ),
-                metric_line(
-                    "Combined contrast std",
-                    avg_contrast,
-                    35.0,
-                    85.0,
-                    low_comment="image is too flat; increase contrast settings",
-                    high_comment="image may be harsh/noisy; reduce contrast enhancement",
-                ),
-                metric_line(
-                    "Combined blur proxy",
-                    avg_blur,
-                    120.0,
-                    1000.0,
-                    low_comment="scan is blurry; improve focus/stability",
-                    high_comment="very sharp/noisy edges; verify no over-sharpening",
-                ),
-                metric_line(
-                    "Combined estimated skew",
-                    avg_skew,
-                    -1.0,
-                    1.0,
-                    unit="°",
-                    low_comment="pages are tilted clockwise; align paper before scanning",
-                    high_comment="pages are tilted counter-clockwise; align paper before scanning",
-                ),
-                f"- Good scans: {good_pages}",
-                f"- Fair scans: {fair_pages}",
-                f"- Poor scans: {poor_pages}",
-            ]
-            if page_quality
-            else ["- Scan quality unavailable"]
-        )
+        diagnosis: list[str] = []
+        if results and answered_rows == 0:
+            diagnosis.append(
+                "- ⚠️ No bubble answers were detected at all. Section detection likely worked,"
+                " but OMR marking threshold/alignment may be failing."
+            )
+        elif results and answered_rows / max(1, len(results)) < 0.15:
+            diagnosis.append(
+                "- ⚠️ Very low answer detection rate (<15%). OMR confidence thresholds or"
+                " option-center alignment may be too strict."
+            )
+        if needs_review > 0 and needs_review / max(1, len(results)) > 0.5:
+            diagnosis.append(
+                "- ⚠️ More than half of rows require review. Bubble classification confidence"
+                " appears unstable for this run."
+            )
+        if not diagnosis:
+            diagnosis.append("- ✅ No critical OMR break pattern detected in this run.")
 
         extraction_stats.value = "\n".join(
             [
-                "Review statistics",
-                f"- Total extracted rows: {len(results)}",
-                f"- Rows flagged for review: {needs_review}",
-                f"- Rows requiring manual marking: {manual_marking}",
-                f"- Unique students: {unique_students}",
-                "- Scan quality:",
-                *quality_lines,
-                "- Section counts:",
-                *(section_lines if section_lines else ["- (none)"]),
+                "Extraction workflow report (statistics panel disabled)",
+                "Step 1 — Input",
+                f"- Files selected: {len(selected_file_paths)}",
+                "Step 2 — Parsing",
+                f"- Parsed output rows: {len(results)}",
+                f"- Unique students resolved: {unique_students}",
+                "Step 3 — Page mode selection",
+                f"- Pages in text-layer mode: {sum(1 for mode in mode_by_page.values() if mode == 'text-layer')}",
+                f"- Pages in scanned-image mode: {sum(1 for mode in mode_by_page.values() if mode == 'scanned-image')}",
+                "Step 4 — Section + row extraction",
+                *(section_lines if section_lines else ["- No sections detected in output rows"]),
+                "Step 5 — OMR answer extraction",
+                f"- Answered rows: {answered_rows}",
+                f"- Unanswered rows: {unanswered_rows}",
+                f"- Needs review: {needs_review}",
+                "Step 6 — Diagnostic conclusion",
+                *diagnosis,
             ]
         )
         extraction_stats.visible = True

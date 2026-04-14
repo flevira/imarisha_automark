@@ -35,7 +35,6 @@ This codebase can extract answer bubbles (MC/TF/Matching) and can read a bubbled
      - `MC` -> `A/B/C/D`
      - `TF` -> `T/F` (mapped to `True/False`)
      - `MATCH` -> `A/B/C/D`
-   - For scanned pages, option centers now prefer OCR-detected column labels in the section header row (e.g., columns 3-6), and only fall back to column-layout heuristics if all labels are not reliably found.
    - The confidence model determines marked options.
    - `MC` allows multiple answers; `TF` and `MATCH` require exactly one selected option or row is flagged `needs_review`.
 
@@ -56,5 +55,5 @@ This codebase can extract answer bubbles (MC/TF/Matching) and can read a bubbled
 
 ## Important caveat
 
-- QR is still preferred for metadata (`sheet_type`, `exam_id` / `test_id`, QR student fields), but answer extraction now continues even when QR is unreadable.
-- Without QR, metadata fields stay empty and rows are typically flagged for review depending on student ID mode/resolution confidence.
+- The current pipeline hard-gates on QR availability: when no QR is found, extraction returns a placeholder row and skips answer extraction for that page.
+- Therefore, successful answer extraction currently assumes the sheet QR is readable.

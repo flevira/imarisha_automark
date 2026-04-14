@@ -564,15 +564,6 @@ def _find_option_centers_scanned(
     if x1_px <= x0_px:
         return {}
 
-    ocr_centers = _find_option_centers_scanned_from_header_ocr(
-        img_bgr=img_bgr,
-        section=section,
-        labels=labels,
-        sx=(img_bgr.shape[1] / page.rect.width),
-    )
-    if ocr_centers:
-        return ocr_centers
-
     left_margin = 0.06
     usable_width = 0.88
     col_width = usable_width / total_cols
@@ -604,52 +595,6 @@ def _find_option_centers_scanned(
         centers[lbl] = best_x / sx
 
     return centers
-
-
-def _find_option_centers_scanned_from_header_ocr(
-    img_bgr: np.ndarray,
-    section: dict[str, Any],
-    labels: list[str],
-    sx: float,
-) -> dict[str, float]:
-    x0_px = max(0, int(section.get("x0_px", 0)))
-    x1_px = min(img_bgr.shape[1], int(section.get("x1_px", img_bgr.shape[1])))
-    y0_px = max(0, int(section.get("y0_px", 0)))
-    y1_px = min(img_bgr.shape[0], int(section.get("y1_px", img_bgr.shape[0])))
-    if x1_px <= x0_px or y1_px <= y0_px:
-        return {}
-
-    header_h = max(40, min(180, int((y1_px - y0_px) * 0.22)))
-    header_roi = img_bgr[y0_px : min(y1_px, y0_px + header_h), x0_px:x1_px]
-    if header_roi.size == 0:
-        return {}
-
-    data = _ocr_data(header_roi, psm=6)
-    candidates: dict[str, list[float]] = {label: [] for label in labels}
-    for i, txt in enumerate(data["text"]):
-        token = (txt or "").strip().upper()
-        if token not in candidates:
-            continue
-        try:
-            conf = float(data["conf"][i])
-        except Exception:
-            conf = -1.0
-        if conf < 20:
-            continue
-        left = int(data["left"][i])
-        width = int(data["width"][i])
-        center_px = x0_px + left + (width / 2.0)
-        candidates[token].append(center_px / sx)
-
-    resolved: dict[str, float] = {}
-    for label in labels:
-        vals = candidates.get(label) or []
-        if vals:
-            resolved[label] = float(np.median(vals))
-
-    if len(resolved) == len(labels):
-        return resolved
-    return {}
 
 
 def _rows_px_to_page(
@@ -852,7 +797,39 @@ def extract_file(file_path: str, student_id_mode: str) -> list[dict[str, Any]]:
         )
 
         qr_raw = decode_qr_robust(img_bgr)
-        qr_parsed = parse_qr_data(qr_raw) if qr_raw else {}
+        if not qr_raw:
+            all_rows.append(
+                {
+                    "page": page_number,
+                    "student_id": None,
+                    "student_id_all": None,
+                    "student_id_qr": None,
+                    "student_id_text": None,
+                    "student_id_bubble": None,
+                    "student_id_handwritten": None,
+                    "student_id_source": "missing",
+                    "id_conflict": False,
+                    "sheet_type": None,
+                    "exam_id": None,
+                    "test_id": None,
+                    "studentName": None,
+                    "section": None,
+                    "question_id": None,
+                    "item_number": None,
+                    "answer": None,
+                    "answered": "No",
+                    "matching_pair": None,
+                    "manual_marking": False,
+                    "needs_review": True,
+                    "score_debug": None,
+                    "qr_raw": None,
+                    "source_file": file_path,
+                    **quality_metrics,
+                }
+            )
+            continue
+
+        qr_parsed = parse_qr_data(qr_raw)
         qr_student_id = qr_parsed.get("studentid")
         qr_student_name = qr_parsed.get("studentname")
         qr_type = (qr_parsed.get("type") or "").upper() or None

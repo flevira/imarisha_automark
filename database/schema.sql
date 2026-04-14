@@ -6,6 +6,7 @@ CREATE TABLE IF NOT EXISTS extractions (
     student_id_all TEXT,
     student_id_qr TEXT,
     student_id_text TEXT,
+    student_id_bubble TEXT,
     student_id_handwritten TEXT,
     student_id_source TEXT,
     id_conflict INTEGER,

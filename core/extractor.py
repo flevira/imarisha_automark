@@ -14,8 +14,8 @@ from core.qr import decode_qr_robust, parse_qr_data
 from core.rows import extract_rows_for_section
 from core.sections import detect_section_blocks, find_option_centers
 from core.student_id import (
+    extract_student_id_bubble,
     extract_student_id_handwritten_ocr,
-    extract_student_id_printed_text,
     resolve_student_id,
 )
 
@@ -752,6 +752,7 @@ def extract_file(file_path: str, student_id_mode: str) -> list[dict[str, Any]]:
                     "student_id_all": None,
                     "student_id_qr": None,
                     "student_id_text": None,
+                    "student_id_bubble": None,
                     "student_id_handwritten": None,
                     "student_id_source": "missing",
                     "id_conflict": False,
@@ -785,12 +786,12 @@ def extract_file(file_path: str, student_id_mode: str) -> list[dict[str, Any]]:
         elif qr_type == "TEST":
             test_id = qr_parsed.get("testid") or qr_parsed.get("assessmentid")
 
-        printed_id = extract_student_id_printed_text(page)
+        bubble_id, _ = extract_student_id_bubble(img_bgr)
         handwritten_id, _ = extract_student_id_handwritten_ocr(img_bgr)
 
         id_info = resolve_student_id(
             qr_id=qr_student_id,
-            printed_id=printed_id,
+            bubble_id=bubble_id,
             handwritten_id=handwritten_id,
             mode=student_id_mode,
         )
@@ -801,6 +802,7 @@ def extract_file(file_path: str, student_id_mode: str) -> list[dict[str, Any]]:
             "student_id_all": id_info["student_id_all"],
             "student_id_qr": id_info["student_id_qr"],
             "student_id_text": id_info["student_id_text"],
+            "student_id_bubble": id_info["student_id_bubble"],
             "student_id_handwritten": id_info["student_id_handwritten"],
             "student_id_source": id_info["student_id_source"],
             "id_conflict": id_info["id_conflict"],

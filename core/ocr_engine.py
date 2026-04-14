@@ -87,44 +87,36 @@ def _extract_tokens_paddle(img: np.ndarray) -> list[OCRCandidate]:
 
 
 @lru_cache(maxsize=1)
-def _get_doctr_predictor() -> Any | None:
+def _get_easyocr_reader() -> Any | None:
     try:
-        from doctr.io import DocumentFile  # type: ignore
-        from doctr.models import ocr_predictor  # type: ignore
+        import easyocr  # type: ignore
 
-        predictor = ocr_predictor(pretrained=True)
-        return (DocumentFile, predictor)
+        return easyocr.Reader(["en"], gpu=False, verbose=False)
     except Exception:
         return None
 
 
-def _extract_tokens_doctr(img: np.ndarray) -> list[OCRCandidate]:
-    doctr = _get_doctr_predictor()
-    if doctr is None:
+def _extract_tokens_easyocr(img: np.ndarray) -> list[OCRCandidate]:
+    reader = _get_easyocr_reader()
+    if reader is None:
         return []
-
-    document_file_cls, predictor = doctr
     try:
-        rgb = cv2.cvtColor(img, cv2.COLOR_GRAY2RGB) if img.ndim == 2 else cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        doc = document_file_cls.from_images([rgb])
-        result = predictor(doc).export()
+        result = reader.readtext(img, detail=1)
     except Exception:
         return []
 
     out: list[OCRCandidate] = []
-    try:
-        pages = result.get("pages", [])
-        for page in pages:
-            for block in page.get("blocks", []):
-                for line in block.get("lines", []):
-                    for word in line.get("words", []):
-                        token = str(word.get("value", "")).strip()
-                        if not token:
-                            continue
-                        conf = float(word.get("confidence", 0.0)) * 100.0
-                        out.append(OCRCandidate(text=token, confidence=conf, engine="doctr"))
-    except Exception:
-        return []
+    for item in result:
+        if len(item) < 3:
+            continue
+        text = str(item[1]).strip()
+        if not text:
+            continue
+        try:
+            conf = float(item[2]) * 100.0
+        except Exception:
+            conf = 0.0
+        out.append(OCRCandidate(text=text, confidence=conf, engine="easyocr"))
     return out
 
 
@@ -159,70 +151,60 @@ def detect_with_fallback(
     min_tesseract_confidence: float = 55.0,
 ) -> OCRCandidate | None:
     variant_hits: list[str] = []
-    all_hits: list[OCRCandidate] = []
+    primary_hits: list[OCRCandidate] = []
 
+    # Primary OCR path: PaddleOCR
     for variant in variants:
         gray = _to_gray(variant)
-        tess_tokens: list[OCRCandidate] = []
-        for cfg in tesseract_configs:
-            tess_tokens.extend(_extract_tokens_tesseract(gray, cfg))
-        tess_hits = _match_candidates(
-            tess_tokens,
+        paddle_hits = _match_candidates(
+            _extract_tokens_paddle(gray),
             pattern,
             min_len=min_len,
             max_len=max_len,
         )
-        all_hits.extend(tess_hits)
-        variant_hits.extend([hit.text for hit in tess_hits])
+        primary_hits.extend(paddle_hits)
+        variant_hits.extend([hit.text for hit in paddle_hits])
 
     def _consistency_boost(text: str) -> float:
         count = variant_hits.count(text)
         return min(18.0, float(count - 1) * 6.0)
 
-    if all_hits:
-        best_tesseract = max(
-            all_hits,
+    if primary_hits:
+        best_primary = max(
+            primary_hits,
             key=lambda c: c.confidence + _consistency_boost(c.text),
         )
-        boosted_conf = best_tesseract.confidence + _consistency_boost(best_tesseract.text)
+        boosted_conf = best_primary.confidence + _consistency_boost(best_primary.text)
         if boosted_conf >= min_tesseract_confidence:
             return OCRCandidate(
-                text=best_tesseract.text,
+                text=best_primary.text,
                 confidence=boosted_conf,
-                engine="tesseract",
+                engine="paddleocr",
             )
 
+    # Fallback OCR path: EasyOCR
     fallback_hits: list[OCRCandidate] = []
     for variant in variants:
         gray = _to_gray(variant)
         fallback_hits.extend(
             _match_candidates(
-                _extract_tokens_paddle(gray),
-                pattern,
-                min_len=min_len,
-                max_len=max_len,
-            )
-        )
-        fallback_hits.extend(
-            _match_candidates(
-                _extract_tokens_doctr(gray),
+                _extract_tokens_easyocr(gray),
                 pattern,
                 min_len=min_len,
                 max_len=max_len,
             )
         )
 
-    if not fallback_hits and not all_hits:
+    if not fallback_hits and not primary_hits:
         return None
 
-    combined = all_hits + fallback_hits
+    combined = primary_hits + fallback_hits
     best = max(
         combined,
-        key=lambda c: c.confidence + _consistency_boost(c.text) + (4.0 if c.engine != "tesseract" else 0.0),
+        key=lambda c: c.confidence + _consistency_boost(c.text) + (4.0 if c.engine != "paddleocr" else 0.0),
     )
     return OCRCandidate(
         text=best.text,
         confidence=best.confidence + _consistency_boost(best.text),
         engine=best.engine,
     )
-

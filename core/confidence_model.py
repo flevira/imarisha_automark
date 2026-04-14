@@ -29,9 +29,9 @@ DEFAULT_MODEL = BubbleModelConfig(
     w_z=1.45,
     w_rel_to_max=1.25,
     w_rel_to_mean=0.85,
-    positive_threshold=0.60,
+    positive_threshold=0.55,
     strong_threshold=0.78,
-    uncertainty_band=0.06,
+    uncertainty_band=0.08,
     blank_score_spread_abs_max=3.0,
     blank_score_spread_rel_max=0.08,
 )

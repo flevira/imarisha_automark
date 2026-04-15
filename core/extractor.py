@@ -270,6 +270,59 @@ def detect_section_blocks_scanned(
     left_col = [item for item in found if item[2] <= mid_x]
     right_col = [item for item in found if item[2] > mid_x]
 
+    def _split_columns_by_heading_clusters(
+        items: list[tuple[str, int, int]]
+    ) -> tuple[list[tuple[str, int, int]], list[tuple[str, int, int]]] | None:
+        if len(items) < 4:
+            return None
+
+        xs = np.array([float(item[2]) for item in items], dtype=np.float32)
+        if xs.size < 4:
+            return None
+
+        spread = float(xs.max() - xs.min())
+        if spread < (w * 0.18):
+            return None
+
+        c1 = float(xs.min())
+        c2 = float(xs.max())
+        if abs(c2 - c1) < 1e-3:
+            return None
+
+        for _ in range(8):
+            d1 = np.abs(xs - c1)
+            d2 = np.abs(xs - c2)
+            assign_left = d1 <= d2
+            if assign_left.all() or (~assign_left).all():
+                return None
+            c1 = float(xs[assign_left].mean())
+            c2 = float(xs[~assign_left].mean())
+
+        if c1 > c2:
+            c1, c2 = c2, c1
+            assign_left = ~assign_left
+
+        separation = abs(c2 - c1)
+        if separation < (w * 0.12):
+            return None
+
+        clustered_left: list[tuple[str, int, int]] = []
+        clustered_right: list[tuple[str, int, int]] = []
+        for item, is_left in zip(items, assign_left):
+            if bool(is_left):
+                clustered_left.append(item)
+            else:
+                clustered_right.append(item)
+
+        if not clustered_left or not clustered_right:
+            return None
+        return clustered_left, clustered_right
+
+    if (not left_col or not right_col) and len(found) >= 4:
+        clustered = _split_columns_by_heading_clusters(found)
+        if clustered is not None:
+            left_col, right_col = clustered
+
     def _build_column_blocks(
         column_items: list[tuple[str, int, int]], x0: int, x1: int
     ) -> list[dict[str, Any]]:

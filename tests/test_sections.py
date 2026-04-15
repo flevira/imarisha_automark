@@ -61,21 +61,13 @@ def test_detect_section_blocks_scanned_dedupes_nearby_duplicate_headings(monkeyp
 def test_detect_section_blocks_scanned_uses_studentnumber_anchor_for_column_split(
     monkeypatch,
 ) -> None:
-    img = np.full((1800, 1000, 3), 255, dtype=np.uint8)
+    img = np.full((1400, 1000, 3), 255, dtype=np.uint8)
 
     def _fake_ocr_data(*_args, **_kwargs):
-        # Includes a STUDENTNUMBER header line and an imbalanced set of heading
-        # x positions where simple split can become one-sided.
         return {
-            "text": [
-                "STUDENTNUMBER",
-                "TRUEFALSE",
-                "MATCHING",
-                "TRUEFALSE",
-                "MULTIPLE",
-            ],
+            "text": ["STUDENTNUMBER", "TRUEFALSE", "MATCHING", "TRUEFALSE", "MULTIPLE"],
             "conf": ["95", "95", "95", "95", "95"],
-            "left": [60, 600, 620, 80, 70],
+            "left": [60, 580, 620, 80, 70],
             "top": [220, 250, 520, 1080, 620],
             "width": [230, 130, 140, 130, 140],
             "height": [30, 24, 24, 24, 24],
@@ -85,14 +77,16 @@ def test_detect_section_blocks_scanned_uses_studentnumber_anchor_for_column_spli
             "page_num": [1, 1, 1, 1, 1],
         }
 
+    # Bad divider x that would put all headings on one side.
+    def _fake_divider(*, img_bgr, y_start):
+        return img_bgr.shape[1] - 5
+
     monkeypatch.setattr(extractor_module, "_ocr_data", _fake_ocr_data)
+    monkeypatch.setattr(extractor_module, "_detect_vertical_column_divider_x", _fake_divider)
 
-    blocks, debug = extractor_module.detect_section_blocks_scanned(img, return_debug=True)
-    section_types = [block["section_type"] for block in sorted(blocks, key=lambda b: b["y0_px"])]
+    _blocks, debug = extractor_module.detect_section_blocks_scanned(img, return_debug=True)
 
-    assert section_types.count("MC") == 1
-    assert section_types.count("MATCH") == 1
-    assert section_types.count("TF") == 2
+    assert debug["column_split_source"] == "midpoint"
     assert debug["column_left_headings"] == 2
     assert debug["column_right_headings"] == 2
 

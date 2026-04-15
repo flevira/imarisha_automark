@@ -109,3 +109,36 @@ def test_detect_vertical_column_divider_x_finds_separator_line() -> None:
 
     assert split_x is not None
     assert abs(split_x - 454) <= 2
+
+
+def test_detect_section_blocks_scanned_uses_divider_start_above_studentnumber(
+    monkeypatch,
+) -> None:
+    img = np.full((1400, 1000, 3), 255, dtype=np.uint8)
+    observed: dict[str, int] = {}
+
+    def _fake_ocr_data(*_args, **_kwargs):
+        return {
+            "text": ["STUDENTNUMBER", "TRUEFALSE", "MULTIPLE", "MATCHING"],
+            "conf": ["95", "95", "95", "95"],
+            "left": [55, 610, 70, 620],
+            "top": [200, 260, 620, 520],
+            "width": [220, 130, 120, 130],
+            "height": [30, 24, 24, 24],
+            "block_num": [1, 2, 3, 4],
+            "par_num": [1, 1, 1, 1],
+            "line_num": [1, 1, 1, 1],
+            "page_num": [1, 1, 1, 1],
+        }
+
+    def _fake_divider(*, img_bgr, y_start):
+        observed["y_start"] = int(y_start)
+        return img_bgr.shape[1] // 2
+
+    monkeypatch.setattr(extractor_module, "_ocr_data", _fake_ocr_data)
+    monkeypatch.setattr(extractor_module, "_detect_vertical_column_divider_x", _fake_divider)
+
+    extractor_module.detect_section_blocks_scanned(img)
+
+    # divider start should be lifted above STUDENTNUMBER baseline, not below it.
+    assert observed["y_start"] < 200

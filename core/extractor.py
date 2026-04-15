@@ -310,9 +310,15 @@ def detect_section_blocks_scanned(
     margin = max(10, int(w * 0.03))
     blocks: list[dict[str, Any]] = []
 
+    divider_start_y = max(0, min(item[1] for item in found) - 24)
+    if studentnumber_anchor_y is not None:
+        # On the answer sheet layout, the vertical divider usually starts a bit
+        # above/beside STUDENTNUMBER and above the first right-column heading.
+        divider_start_y = max(0, min(divider_start_y, studentnumber_anchor_y - 56))
+
     split_x = _detect_vertical_column_divider_x(
         img_bgr=img_bgr,
-        y_start=max(0, studentnumber_anchor_y or 0),
+        y_start=divider_start_y,
     )
     if split_x is None:
         split_x = mid_x

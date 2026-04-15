@@ -56,3 +56,37 @@ def test_detect_section_blocks_scanned_dedupes_nearby_duplicate_headings(monkeyp
 
     assert section_types.count("MC") == 1
     assert section_types.count("TF") == 1
+
+
+def test_detect_section_blocks_scanned_recovers_columns_when_midline_split_fails(
+    monkeypatch,
+) -> None:
+    img = np.full((1400, 1000, 3), 255, dtype=np.uint8)
+
+    def _fake_ocr_data(*_args, **_kwargs):
+        # All headings land on the "left" side of the page midpoint (x <= 500),
+        # but they still form two distinct x-clusters. This mimics scanned pages
+        # where perspective/deskew shifts the right column leftward.
+        return {
+            "text": ["MULTIPLE", "TRUEFALSE", "TRUEFALSE", "MATCHING"],
+            "conf": ["95", "95", "95", "95"],
+            "left": [40, 452, 36, 458],
+            "top": [620, 120, 1100, 320],
+            "width": [120, 130, 130, 120],
+            "height": [24, 24, 24, 24],
+            "block_num": [1, 2, 3, 4],
+            "par_num": [1, 1, 1, 1],
+            "line_num": [1, 1, 1, 1],
+            "page_num": [1, 1, 1, 1],
+        }
+
+    monkeypatch.setattr(extractor_module, "_ocr_data", _fake_ocr_data)
+
+    blocks, debug = extractor_module.detect_section_blocks_scanned(img, return_debug=True)
+    section_types = [block["section_type"] for block in sorted(blocks, key=lambda b: b["y0_px"])]
+
+    assert section_types.count("MC") == 1
+    assert section_types.count("MATCH") == 1
+    assert section_types.count("TF") == 2
+    assert debug["column_left_headings"] == 2
+    assert debug["column_right_headings"] == 2

@@ -251,6 +251,49 @@ def detect_section_blocks_scanned(
     if not found:
         found = _find_sections(min_conf=10.0)
 
+    def _find_studentnumber_anchor_y() -> int | None:
+        line_tokens: dict[tuple[int, int, int, int], list[tuple[str, int, int]]] = {}
+        for i, txt in enumerate(data["text"]):
+            token = (txt or "").strip()
+            if not token:
+                continue
+            try:
+                conf = float(data["conf"][i])
+            except Exception:
+                conf = -1.0
+            if conf < 12.0:
+                continue
+
+            key = (
+                int(data["block_num"][i]),
+                int(data["par_num"][i]),
+                int(data["line_num"][i]),
+                int(data["page_num"][i]),
+            )
+            top = int(data["top"][i])
+            height = int(data["height"][i])
+            line_tokens.setdefault(key, []).append((token.upper(), top, height))
+
+        best_anchor: int | None = None
+        for words in line_tokens.values():
+            normalized = re.sub(
+                r"[^A-Z]",
+                "",
+                "".join(token for token, *_ in words),
+            )
+            if "STUDENTNUMBER" not in normalized:
+                continue
+            line_bottom = max(top + h for _, top, h in words)
+            if best_anchor is None or line_bottom > best_anchor:
+                best_anchor = line_bottom
+        return best_anchor
+
+    studentnumber_anchor_y = _find_studentnumber_anchor_y()
+    if studentnumber_anchor_y is not None and found:
+        filtered = [item for item in found if item[1] >= (studentnumber_anchor_y - 20)]
+        if len(filtered) >= 2:
+            found = filtered
+
     if not found:
         empty_debug = {
             "raw_headings_detected": 0,
@@ -269,6 +312,7 @@ def detect_section_blocks_scanned(
 
     left_col = [item for item in found if item[2] <= mid_x]
     right_col = [item for item in found if item[2] > mid_x]
+    used_studentnumber_half_split = False
 
     def _split_columns_by_heading_clusters(
         items: list[tuple[str, int, int]]
@@ -318,10 +362,53 @@ def detect_section_blocks_scanned(
             return None
         return clustered_left, clustered_right
 
-    if (not left_col or not right_col) and len(found) >= 4:
+    def _split_columns_by_largest_x_gap(
+        items: list[tuple[str, int, int]]
+    ) -> tuple[list[tuple[str, int, int]], list[tuple[str, int, int]]] | None:
+        if len(items) < 4:
+            return None
+
+        ordered = sorted(items, key=lambda item: item[2])
+        xs = [int(item[2]) for item in ordered]
+        if len(xs) < 4:
+            return None
+
+        max_gap = -1
+        split_idx = -1
+        for idx in range(len(xs) - 1):
+            gap = xs[idx + 1] - xs[idx]
+            if gap > max_gap:
+                max_gap = gap
+                split_idx = idx
+
+        min_gap = max(30, int(w * 0.05))
+        if max_gap < min_gap:
+            return None
+
+        cut_x = (xs[split_idx] + xs[split_idx + 1]) / 2.0
+        split_left = [item for item in items if item[2] <= cut_x]
+        split_right = [item for item in items if item[2] > cut_x]
+        if not split_left or not split_right:
+            return None
+        return split_left, split_right
+
+    if studentnumber_anchor_y is not None and len(found) >= 2:
+        # Preferred path requested for this layout: once we detect the
+        # STUDENTNUMBER anchor, split the content below it into equal halves.
+        anchor_left = [item for item in found if item[2] <= mid_x]
+        anchor_right = [item for item in found if item[2] > mid_x]
+        if anchor_left and anchor_right:
+            left_col, right_col = anchor_left, anchor_right
+            used_studentnumber_half_split = True
+
+    if (not used_studentnumber_half_split) and (not left_col or not right_col) and len(found) >= 4:
         clustered = _split_columns_by_heading_clusters(found)
         if clustered is not None:
             left_col, right_col = clustered
+        else:
+            split_by_gap = _split_columns_by_largest_x_gap(found)
+            if split_by_gap is not None:
+                left_col, right_col = split_by_gap
 
     def _build_column_blocks(
         column_items: list[tuple[str, int, int]], x0: int, x1: int
@@ -391,6 +478,44 @@ def extract_question_ids_from_roi(roi_bgr: np.ndarray) -> str | None:
         min_tesseract_confidence=50.0,
     )
     return match.text if match else None
+
+
+def extract_question_id_with_fallbacks(
+    row_roi_bgr: np.ndarray,
+    *,
+    section_type: str,
+) -> str | None:
+    if row_roi_bgr.size == 0:
+        return None
+
+    h, w = row_roi_bgr.shape[:2]
+    if h <= 2 or w <= 2:
+        return None
+
+    def _slice(x_start_ratio: float, x_end_ratio: float) -> np.ndarray:
+        x0 = max(0, min(w - 1, int(round(w * x_start_ratio))))
+        x1 = max(x0 + 1, min(w, int(round(w * x_end_ratio))))
+        return row_roi_bgr[:, x0:x1]
+
+    qid = extract_question_ids_from_roi(_slice(0.0, 0.35))
+    if qid:
+        return qid
+
+    # Scanned pages often have slight section x-boundary drift. Probe a wider
+    # area to recover the QID when the narrow left crop misses the printed text.
+    fallback_windows = [
+        (0.0, 0.50),
+        (0.05, 0.60),
+        (0.0, 0.70),
+    ]
+    if section_type == "MATCH":
+        fallback_windows.extend([(0.10, 0.65), (0.15, 0.70)])
+
+    for start, end in fallback_windows:
+        qid = extract_question_ids_from_roi(_slice(start, end))
+        if qid:
+            return qid
+    return None
 
 
 def extract_item_numbers_from_roi(roi_bgr: np.ndarray) -> int | None:
@@ -512,14 +637,29 @@ def extract_rows_for_section_scanned(
 
     missing_qid = 0
     rows_dropped_missing_item_number = 0
+    qid_candidates = _extract_scanned_qid_candidates(
+        section_roi_bgr=section_roi,
+        section_type=str(section["section_type"]),
+        x_offset=x0,
+        y_offset=y0,
+    )
     for yb0, yb1 in refined_bands:
         y_abs0 = y0 + yb0
         y_abs1 = y0 + yb1
         if y_abs1 <= y_abs0:
             continue
 
-        left_roi = img_bgr[y_abs0:y_abs1, x0 : x0 + qid_x1_local]
-        qid = extract_question_ids_from_roi(left_roi)
+        qid = _pick_qid_for_row_from_candidates(
+            qid_candidates=qid_candidates,
+            y_abs0=y_abs0,
+            y_abs1=y_abs1,
+        )
+        row_roi = img_bgr[y_abs0:y_abs1, x0:x1]
+        if not qid:
+            qid = extract_question_id_with_fallbacks(
+                row_roi,
+                section_type=str(section["section_type"]),
+            )
         needs_review = False
         if not qid:
             missing_qid += 1
@@ -556,6 +696,88 @@ def extract_rows_for_section_scanned(
         f"(missing question_id: {missing_qid})"
     )
     return rows, debug
+
+
+def _extract_scanned_qid_candidates(
+    section_roi_bgr: np.ndarray,
+    *,
+    section_type: str,
+    x_offset: int,
+    y_offset: int,
+) -> list[dict[str, float | str]]:
+    if section_roi_bgr.size == 0:
+        return []
+
+    h, w = section_roi_bgr.shape[:2]
+    x_limit_ratio = 0.72 if section_type == "MATCH" else 0.62
+    x_limit = int(max(10, w * x_limit_ratio))
+
+    candidates: list[dict[str, float | str]] = []
+    for psm in (6, 11):
+        data = _ocr_data(section_roi_bgr, psm=psm)
+        for i, txt in enumerate(data["text"]):
+            token = re.sub(r"[^0-9]", "", (txt or ""))
+            if not re.fullmatch(r"\d{5,6}", token):
+                continue
+            try:
+                conf = float(data["conf"][i])
+            except Exception:
+                conf = -1.0
+            if conf < 25:
+                continue
+
+            left = int(data["left"][i])
+            width = int(data["width"][i])
+            if left > x_limit:
+                continue
+
+            top = int(data["top"][i])
+            height = int(data["height"][i])
+            y_center = y_offset + top + (height / 2.0)
+            x_center = x_offset + left + (width / 2.0)
+            candidates.append(
+                {
+                    "question_id": token,
+                    "y_center": float(y_center),
+                    "x_center": float(x_center),
+                }
+            )
+
+    if not candidates:
+        return []
+
+    deduped: dict[tuple[str, int], dict[str, float | str]] = {}
+    for cand in candidates:
+        qid = str(cand["question_id"])
+        y_bucket = int(round(float(cand["y_center"]) / 8.0))
+        deduped[(qid, y_bucket)] = cand
+
+    return sorted(deduped.values(), key=lambda c: float(c["y_center"]))
+
+
+def _pick_qid_for_row_from_candidates(
+    *,
+    qid_candidates: list[dict[str, float | str]],
+    y_abs0: int,
+    y_abs1: int,
+) -> str | None:
+    if not qid_candidates:
+        return None
+
+    row_center = (y_abs0 + y_abs1) / 2.0
+    row_h = max(6.0, float(y_abs1 - y_abs0))
+    max_dist = max(20.0, row_h * 1.35)
+
+    best_qid: str | None = None
+    best_dist = float("inf")
+    for cand in qid_candidates:
+        y = float(cand["y_center"])
+        dist = abs(y - row_center)
+        if dist <= max_dist and dist < best_dist:
+            best_qid = str(cand["question_id"])
+            best_dist = dist
+
+    return best_qid
 
 
 def _find_scanned_table_header_bottom(section_roi_bgr: np.ndarray) -> int | None:

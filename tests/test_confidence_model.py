@@ -51,6 +51,26 @@ def test_multiple_positive_answers_allowed_without_review() -> None:
     assert needs_review is False
 
 
+def test_mc_multiple_allowance_discards_far_lower_probabilities() -> None:
+    model = BubbleConfidenceModel()
+    scores = {
+        "A": 171.73318077803202,
+        "B": 68.36155606407323,
+        "C": 68.50114416475972,
+        "D": 68.36430205949657,
+    }
+
+    answers, needs_review, probabilities = model.classify(
+        ["A", "B", "C", "D"],
+        scores,
+        allow_multiple_answers=True,
+    )
+
+    assert answers == ["A"]
+    assert needs_review is False
+    assert probabilities["A"] > probabilities["B"]
+
+
 def test_multiple_positive_answers_without_allowance_need_review() -> None:
     model = BubbleConfidenceModel()
     scores = {

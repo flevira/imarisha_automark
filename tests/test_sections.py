@@ -90,3 +90,36 @@ def test_detect_section_blocks_scanned_recovers_columns_when_midline_split_fails
     assert section_types.count("TF") == 2
     assert debug["column_left_headings"] == 2
     assert debug["column_right_headings"] == 2
+
+
+def test_detect_section_blocks_scanned_recovers_columns_with_largest_gap_split(
+    monkeypatch,
+) -> None:
+    img = np.full((1400, 3000, 3), 255, dtype=np.uint8)
+
+    def _fake_ocr_data(*_args, **_kwargs):
+        # Small absolute spread vs page width makes k-means split bail out
+        # (spread < 18% of width), but there are still two obvious x groups.
+        return {
+            "text": ["MULTIPLE", "TRUEFALSE", "MATCHING", "TRUEFALSE"],
+            "conf": ["95", "95", "95", "95"],
+            "left": [40, 96, 330, 392],
+            "top": [640, 1030, 180, 960],
+            "width": [120, 130, 120, 130],
+            "height": [24, 24, 24, 24],
+            "block_num": [1, 2, 3, 4],
+            "par_num": [1, 1, 1, 1],
+            "line_num": [1, 1, 1, 1],
+            "page_num": [1, 1, 1, 1],
+        }
+
+    monkeypatch.setattr(extractor_module, "_ocr_data", _fake_ocr_data)
+
+    blocks, debug = extractor_module.detect_section_blocks_scanned(img, return_debug=True)
+    section_types = [block["section_type"] for block in sorted(blocks, key=lambda b: b["y0_px"])]
+
+    assert section_types.count("MC") == 1
+    assert section_types.count("MATCH") == 1
+    assert section_types.count("TF") == 2
+    assert debug["column_left_headings"] == 2
+    assert debug["column_right_headings"] == 2

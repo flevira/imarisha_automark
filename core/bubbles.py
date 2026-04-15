@@ -94,7 +94,14 @@ def extract_row_answers(
         return [], False, {}
 
     if section["section_type"] == "MATCH" and len(filled_labels) != 1:
-        return [], False, {}
+        if len(filled_labels) > 1 and probabilities:
+            top_label = max(probabilities, key=probabilities.get)
+            if top_label in output_map:
+                answers = [output_map[top_label]]
+                debug_scores = {f"score_{key}": value for key, value in scores.items()}
+                debug_scores.update({f"prob_{key}": value for key, value in probabilities.items()})
+                return answers, True, debug_scores
+        return [], True, {}
 
     answers = [output_map[label] for label in filled_labels if label in output_map]
     if not answers:

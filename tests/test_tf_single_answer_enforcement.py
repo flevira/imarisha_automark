@@ -6,13 +6,18 @@ import numpy as np
 from core import bubbles as bubbles_module
 
 
-class _DummyBubbleModel:
+class _DummyTfBubbleModel:
     def classify(self, **_kwargs):  # type: ignore[no-untyped-def]
         return ["T", "F"], False, {"T": 0.82, "F": 0.79}
 
 
+class _DummyMatchBubbleModel:
+    def classify(self, **_kwargs):  # type: ignore[no-untyped-def]
+        return ["A", "B"], True, {"A": 0.82, "B": 0.79, "C": 0.11, "D": 0.07}
+
+
 def test_tf_with_both_options_detected_is_forced_unanswered(monkeypatch) -> None:
-    monkeypatch.setattr(bubbles_module, "BUBBLE_MODEL", _DummyBubbleModel())
+    monkeypatch.setattr(bubbles_module, "BUBBLE_MODEL", _DummyTfBubbleModel())
 
     page = type("DummyPage", (), {"rect": fitz.Rect(0, 0, 1000, 1400)})()
     img = np.full((1400, 1000, 3), 255, dtype=np.uint8)
@@ -33,8 +38,8 @@ def test_tf_with_both_options_detected_is_forced_unanswered(monkeypatch) -> None
     assert scores == {}
 
 
-def test_match_with_multiple_options_detected_is_forced_unanswered(monkeypatch) -> None:
-    monkeypatch.setattr(bubbles_module, "BUBBLE_MODEL", _DummyBubbleModel())
+def test_match_with_multiple_options_detected_uses_strongest_and_flags_review(monkeypatch) -> None:
+    monkeypatch.setattr(bubbles_module, "BUBBLE_MODEL", _DummyMatchBubbleModel())
 
     page = type("DummyPage", (), {"rect": fitz.Rect(0, 0, 1000, 1400)})()
     img = np.full((1400, 1000, 3), 255, dtype=np.uint8)
@@ -50,6 +55,7 @@ def test_match_with_multiple_options_detected_is_forced_unanswered(monkeypatch) 
         option_centers=option_centers,
     )
 
-    assert answers == []
-    assert needs_review is False
-    assert scores == {}
+    assert answers == ["A"]
+    assert needs_review is True
+    assert "score_A" in scores
+    assert "prob_A" in scores

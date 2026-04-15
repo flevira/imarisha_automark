@@ -310,105 +310,17 @@ def detect_section_blocks_scanned(
     margin = max(10, int(w * 0.03))
     blocks: list[dict[str, Any]] = []
 
-    left_col = [item for item in found if item[2] <= mid_x]
-    right_col = [item for item in found if item[2] > mid_x]
-    used_studentnumber_half_split = False
+    split_x = _detect_vertical_column_divider_x(
+        img_bgr=img_bgr,
+        y_start=max(0, studentnumber_anchor_y or 0),
+    )
+    if split_x is None:
+        split_x = mid_x
 
-    def _split_columns_by_heading_clusters(
-        items: list[tuple[str, int, int]]
-    ) -> tuple[list[tuple[str, int, int]], list[tuple[str, int, int]]] | None:
-        if len(items) < 4:
-            return None
-
-        xs = np.array([float(item[2]) for item in items], dtype=np.float32)
-        if xs.size < 4:
-            return None
-
-        spread = float(xs.max() - xs.min())
-        if spread < (w * 0.18):
-            return None
-
-        c1 = float(xs.min())
-        c2 = float(xs.max())
-        if abs(c2 - c1) < 1e-3:
-            return None
-
-        for _ in range(8):
-            d1 = np.abs(xs - c1)
-            d2 = np.abs(xs - c2)
-            assign_left = d1 <= d2
-            if assign_left.all() or (~assign_left).all():
-                return None
-            c1 = float(xs[assign_left].mean())
-            c2 = float(xs[~assign_left].mean())
-
-        if c1 > c2:
-            c1, c2 = c2, c1
-            assign_left = ~assign_left
-
-        separation = abs(c2 - c1)
-        if separation < (w * 0.12):
-            return None
-
-        clustered_left: list[tuple[str, int, int]] = []
-        clustered_right: list[tuple[str, int, int]] = []
-        for item, is_left in zip(items, assign_left):
-            if bool(is_left):
-                clustered_left.append(item)
-            else:
-                clustered_right.append(item)
-
-        if not clustered_left or not clustered_right:
-            return None
-        return clustered_left, clustered_right
-
-    def _split_columns_by_largest_x_gap(
-        items: list[tuple[str, int, int]]
-    ) -> tuple[list[tuple[str, int, int]], list[tuple[str, int, int]]] | None:
-        if len(items) < 4:
-            return None
-
-        ordered = sorted(items, key=lambda item: item[2])
-        xs = [int(item[2]) for item in ordered]
-        if len(xs) < 4:
-            return None
-
-        max_gap = -1
-        split_idx = -1
-        for idx in range(len(xs) - 1):
-            gap = xs[idx + 1] - xs[idx]
-            if gap > max_gap:
-                max_gap = gap
-                split_idx = idx
-
-        min_gap = max(30, int(w * 0.05))
-        if max_gap < min_gap:
-            return None
-
-        cut_x = (xs[split_idx] + xs[split_idx + 1]) / 2.0
-        split_left = [item for item in items if item[2] <= cut_x]
-        split_right = [item for item in items if item[2] > cut_x]
-        if not split_left or not split_right:
-            return None
-        return split_left, split_right
-
-    if studentnumber_anchor_y is not None and len(found) >= 2:
-        # Preferred path requested for this layout: once we detect the
-        # STUDENTNUMBER anchor, split the content below it into equal halves.
-        anchor_left = [item for item in found if item[2] <= mid_x]
-        anchor_right = [item for item in found if item[2] > mid_x]
-        if anchor_left and anchor_right:
-            left_col, right_col = anchor_left, anchor_right
-            used_studentnumber_half_split = True
-
-    if (not used_studentnumber_half_split) and (not left_col or not right_col) and len(found) >= 4:
-        clustered = _split_columns_by_heading_clusters(found)
-        if clustered is not None:
-            left_col, right_col = clustered
-        else:
-            split_by_gap = _split_columns_by_largest_x_gap(found)
-            if split_by_gap is not None:
-                left_col, right_col = split_by_gap
+    # Use one deterministic split strategy only:
+    # headings below STUDENTNUMBER (when present), then split by divider/midpoint.
+    left_col = [item for item in found if item[2] <= split_x]
+    right_col = [item for item in found if item[2] > split_x]
 
     def _build_column_blocks(
         column_items: list[tuple[str, int, int]], x0: int, x1: int
@@ -442,8 +354,8 @@ def detect_section_blocks_scanned(
                 )
         return col_blocks
 
-    left_blocks = _build_column_blocks(left_col, 0, mid_x - margin)
-    right_blocks = _build_column_blocks(right_col, mid_x + margin, w)
+    left_blocks = _build_column_blocks(left_col, 0, split_x - margin)
+    right_blocks = _build_column_blocks(right_col, split_x + margin, w)
     blocks.extend(left_blocks)
     blocks.extend(right_blocks)
     print(f"[extractor][scanned] detected sections: {len(blocks)}")
@@ -453,8 +365,52 @@ def detect_section_blocks_scanned(
         "column_right_headings": len(right_col),
         "left_column_sections": len(left_blocks),
         "right_column_sections": len(right_blocks),
+        "column_split_x_px": int(split_x),
+        "column_split_source": "divider" if split_x != mid_x else "midpoint",
     }
     return (blocks, debug) if return_debug else blocks
+
+
+def _detect_vertical_column_divider_x(
+    *,
+    img_bgr: np.ndarray,
+    y_start: int,
+) -> int | None:
+    if img_bgr.size == 0:
+        return None
+
+    h, w = img_bgr.shape[:2]
+    y0 = max(0, min(h - 1, int(y_start)))
+    roi = img_bgr[y0:h, :]
+    if roi.size == 0:
+        return None
+
+    gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+    _, bw = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+    kernel_h = max(25, int(roi.shape[0] * 0.08))
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1, kernel_h))
+    vertical = cv2.morphologyEx(bw, cv2.MORPH_OPEN, kernel)
+
+    col_counts = np.sum(vertical > 0, axis=0).astype(np.float32)
+    if col_counts.size < 10:
+        return None
+
+    x_lo = int(w * 0.3)
+    x_hi = int(w * 0.7)
+    if x_hi <= x_lo:
+        return None
+
+    search = col_counts[x_lo:x_hi]
+    if search.size == 0:
+        return None
+
+    best_idx = int(np.argmax(search))
+    best_strength = float(search[best_idx])
+    min_strength = max(20.0, float(roi.shape[0] * 0.28))
+    if best_strength < min_strength:
+        return None
+
+    return x_lo + best_idx
 
 
 def extract_question_ids_from_roi(roi_bgr: np.ndarray) -> str | None:
@@ -633,7 +589,8 @@ def extract_rows_for_section_scanned(
     row_candidates: list[dict[str, Any]] = []
     section_w = max(1, x1 - x0)
     qid_x1_local = int(section_w * 0.35)
-    item_x0_local = int(section_w * 0.18)
+    item_x0_local = int(section_w * 0.40)
+    item_x1_local = int(section_w * 0.62)
 
     missing_qid = 0
     rows_dropped_missing_item_number = 0
@@ -642,6 +599,15 @@ def extract_rows_for_section_scanned(
         section_type=str(section["section_type"]),
         x_offset=x0,
         y_offset=y0,
+    )
+    item_candidates = (
+        _extract_scanned_item_candidates(
+            section_roi_bgr=section_roi,
+            x_offset=x0,
+            y_offset=y0,
+        )
+        if section["section_type"] == "MATCH"
+        else []
     )
     for yb0, yb1 in refined_bands:
         y_abs0 = y0 + yb0
@@ -667,10 +633,16 @@ def extract_rows_for_section_scanned(
 
         item_number = None
         if section["section_type"] == "MATCH":
+            item_number = _pick_item_number_for_row_from_candidates(
+                item_candidates=item_candidates,
+                y_abs0=y_abs0,
+                y_abs1=y_abs1,
+            )
             item_roi = img_bgr[
-                y_abs0:y_abs1, x0 + item_x0_local : x0 + qid_x1_local
+                y_abs0:y_abs1, x0 + item_x0_local : x0 + item_x1_local
             ]
-            item_number = extract_item_numbers_from_roi(item_roi)
+            if item_number is None:
+                item_number = extract_item_numbers_from_roi(item_roi)
             if item_number is None:
                 rows_dropped_missing_item_number += 1
                 continue
@@ -778,6 +750,88 @@ def _pick_qid_for_row_from_candidates(
             best_dist = dist
 
     return best_qid
+
+
+def _extract_scanned_item_candidates(
+    *,
+    section_roi_bgr: np.ndarray,
+    x_offset: int,
+    y_offset: int,
+) -> list[dict[str, float | int]]:
+    if section_roi_bgr.size == 0:
+        return []
+
+    h, w = section_roi_bgr.shape[:2]
+    x_min = int(w * 0.33)
+    x_max = int(w * 0.72)
+    y_max = int(h * 0.97)
+    candidates: list[dict[str, float | int]] = []
+
+    for psm in (6, 11):
+        data = _ocr_data(section_roi_bgr, psm=psm)
+        for i, txt in enumerate(data["text"]):
+            token = re.sub(r"[^0-9]", "", (txt or ""))
+            if token not in {"1", "2", "3", "4"}:
+                continue
+            try:
+                conf = float(data["conf"][i])
+            except Exception:
+                conf = -1.0
+            if conf < 18.0:
+                continue
+
+            left = int(data["left"][i])
+            width = int(data["width"][i])
+            x_center_local = left + (width / 2.0)
+            if x_center_local < x_min or x_center_local > x_max:
+                continue
+
+            top = int(data["top"][i])
+            height = int(data["height"][i])
+            y_center_local = top + (height / 2.0)
+            if y_center_local > y_max:
+                continue
+
+            candidates.append(
+                {
+                    "item_number": int(token),
+                    "y_center": float(y_offset + y_center_local),
+                    "x_center": float(x_offset + x_center_local),
+                }
+            )
+
+    if not candidates:
+        return []
+
+    deduped: dict[tuple[int, int], dict[str, float | int]] = {}
+    for cand in candidates:
+        item_num = int(cand["item_number"])
+        y_bucket = int(round(float(cand["y_center"]) / 6.0))
+        deduped[(item_num, y_bucket)] = cand
+
+    return sorted(deduped.values(), key=lambda c: float(c["y_center"]))
+
+
+def _pick_item_number_for_row_from_candidates(
+    *,
+    item_candidates: list[dict[str, float | int]],
+    y_abs0: int,
+    y_abs1: int,
+) -> int | None:
+    if not item_candidates:
+        return None
+
+    row_center = (y_abs0 + y_abs1) / 2.0
+    row_height = max(1.0, float(y_abs1 - y_abs0))
+    max_delta = max(8.0, row_height * 0.9)
+    best_item: int | None = None
+    best_delta = float("inf")
+    for cand in item_candidates:
+        delta = abs(float(cand["y_center"]) - row_center)
+        if delta <= max_delta and delta < best_delta:
+            best_item = int(cand["item_number"])
+            best_delta = delta
+    return best_item
 
 
 def _find_scanned_table_header_bottom(section_roi_bgr: np.ndarray) -> int | None:

@@ -35,6 +35,26 @@ def test_extract_student_id_bubble_reads_filled_rows() -> None:
     assert low_conf is False
 
 
+
+
+def test_extract_student_id_bubble_uses_zero_for_unfilled_column() -> None:
+    img = _build_bubble_grid_image("94567")
+
+    x0 = int(0.02 * img.shape[1])
+    y0 = int(0.14 * img.shape[0])
+    roi_w = int((0.48 - 0.02) * img.shape[1])
+    roi_h = int((0.44 - 0.14) * img.shape[0])
+    cols = np.linspace(x0 + 50, x0 + roi_w - 50, 5).astype(int)
+    rows = np.linspace(y0 + 30, y0 + roi_h - 30, 10).astype(int)
+
+    # Clear the first filled bubble so column 1 is empty and should read as 0.
+    cv2.circle(img, (int(cols[0]), int(rows[9])), 12, (255, 255, 255), -1)
+
+    detected, low_conf = extract_student_id_bubble(img)
+    assert detected is not None
+    assert detected[0] == "0"
+    assert low_conf is True
+
 def test_resolve_student_id_prefers_bubble_when_no_qr() -> None:
     resolved = resolve_student_id(
         qr_id=None,

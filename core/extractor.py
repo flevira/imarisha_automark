@@ -327,6 +327,15 @@ def detect_section_blocks_scanned(
     # headings below STUDENTNUMBER (when present), then split by divider/midpoint.
     left_col = [item for item in found if item[2] <= split_x]
     right_col = [item for item in found if item[2] > split_x]
+    split_source = "divider" if split_x != mid_x else "midpoint"
+
+    # Guardrail for noisy divider detections: if divider split is one-sided,
+    # hard-fallback to midpoint so both columns can still be recovered.
+    if split_source == "divider" and (not left_col or not right_col):
+        split_x = mid_x
+        split_source = "midpoint"
+        left_col = [item for item in found if item[2] <= split_x]
+        right_col = [item for item in found if item[2] > split_x]
 
     def _build_column_blocks(
         column_items: list[tuple[str, int, int]], x0: int, x1: int
@@ -372,7 +381,7 @@ def detect_section_blocks_scanned(
         "left_column_sections": len(left_blocks),
         "right_column_sections": len(right_blocks),
         "column_split_x_px": int(split_x),
-        "column_split_source": "divider" if split_x != mid_x else "midpoint",
+        "column_split_source": split_source,
     }
     return (blocks, debug) if return_debug else blocks
 
@@ -401,8 +410,8 @@ def _detect_vertical_column_divider_x(
     if col_counts.size < 10:
         return None
 
-    x_lo = int(w * 0.3)
-    x_hi = int(w * 0.7)
+    x_lo = int(w * 0.4)
+    x_hi = int(w * 0.6)
     if x_hi <= x_lo:
         return None
 

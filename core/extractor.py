@@ -731,7 +731,7 @@ def _rows_px_to_page(
     return rows
 
 
-def render_page_to_bgr(page: fitz.Page, zoom: float = RENDER_ZOOM) -> np.ndarray:
+def render_page_raw_to_bgr(page: fitz.Page, zoom: float = RENDER_ZOOM) -> np.ndarray:
     pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom), alpha=False)
     img = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width, pix.n)
     if pix.n == 4:
@@ -740,7 +740,10 @@ def render_page_to_bgr(page: fitz.Page, zoom: float = RENDER_ZOOM) -> np.ndarray
         img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
     elif pix.n == 1:
         img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+    return img
 
+
+def preprocess_scanned_for_omr(img: np.ndarray) -> np.ndarray:
     # 1) Grayscale base + scan-brightness normalization.
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     brightness = float(np.mean(gray))
@@ -800,6 +803,10 @@ def render_page_to_bgr(page: fitz.Page, zoom: float = RENDER_ZOOM) -> np.ndarray
 
     # Keep downstream contracts unchanged (3-channel BGR image).
     return cv2.cvtColor(preprocessed, cv2.COLOR_GRAY2BGR)
+
+
+def render_page_to_bgr(page: fitz.Page, zoom: float = RENDER_ZOOM) -> np.ndarray:
+    return preprocess_scanned_for_omr(render_page_raw_to_bgr(page, zoom=zoom))
 
 
 def _sorted_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -909,6 +916,9 @@ def _format_extraction_report(
                 f"  6) Rows flagged for review: {page_report['rows_needing_review_total']}",
             ]
         )
+        scan_heading_guard_warning = page_report.get("scan_heading_guard_warning")
+        if scan_heading_guard_warning:
+            lines.append(f"     - ⚠️ {scan_heading_guard_warning}")
 
         section_debug = page_report.get("section_debug", [])
         if section_debug:
@@ -942,20 +952,22 @@ def extract_file_with_report(
 
     for page_idx in range(len(doc)):
         page = doc[page_idx]
-        img_bgr = render_page_to_bgr(page)
+        img_raw_bgr = render_page_raw_to_bgr(page)
+        img_bgr = preprocess_scanned_for_omr(img_raw_bgr)
         page_number = page_idx + 1
         use_text_layer = has_usable_text_layer(page)
-        estimated_skew = _estimate_skew_correction_degrees(img_bgr)
+        estimated_skew = _estimate_skew_correction_degrees(img_raw_bgr)
         if use_text_layer and abs(estimated_skew) >= TEXT_LAYER_SKEW_FALLBACK_DEG:
             # Some scanned PDFs include an OCR text layer. Their word coordinates are
             # often unreliable when the underlying scan is skewed, so force scanned
             # mode so deskew/alignment can be applied consistently.
             use_text_layer = False
         if not use_text_layer:
-            img_bgr = normalize_scanned_page_rotation(img_bgr)
-            img_bgr = align_scanned_page_to_template(img_bgr)
+            img_raw_bgr = normalize_scanned_page_rotation(img_raw_bgr)
+            img_raw_bgr = align_scanned_page_to_template(img_raw_bgr)
+            img_bgr = preprocess_scanned_for_omr(img_raw_bgr)
         quality_metrics = _compute_scan_quality_metrics(
-            img_bgr=img_bgr,
+            img_bgr=img_raw_bgr,
             estimated_skew=estimated_skew,
             used_text_layer=use_text_layer,
         )
@@ -964,7 +976,7 @@ def extract_file_with_report(
             f"{'text-layer mode' if use_text_layer else 'scanned-image mode'}"
         )
 
-        qr_raw = decode_qr_robust(img_bgr)
+        qr_raw = decode_qr_robust(img_raw_bgr)
         qr_parsed = parse_qr_data(qr_raw) if qr_raw else {}
         qr_student_id = qr_parsed.get("studentid")
         qr_student_name = qr_parsed.get("studentname")
@@ -977,8 +989,8 @@ def extract_file_with_report(
         elif qr_type == "TEST":
             test_id = qr_parsed.get("testid") or qr_parsed.get("assessmentid")
 
-        bubble_id, _ = extract_student_id_bubble(img_bgr)
-        handwritten_id, _ = extract_student_id_handwritten_ocr(img_bgr)
+        bubble_id, _ = extract_student_id_bubble(img_raw_bgr)
+        handwritten_id, _ = extract_student_id_handwritten_ocr(img_raw_bgr)
 
         id_info = resolve_student_id(
             qr_id=qr_student_id,
@@ -1011,7 +1023,7 @@ def extract_file_with_report(
             sections = detect_section_blocks(page)
         else:
             sections, scan_section_debug = detect_section_blocks_scanned(
-                img_bgr, return_debug=True
+                img_raw_bgr, return_debug=True
             )
         page_report: dict[str, Any] = {
             "page": page_number,
@@ -1025,8 +1037,20 @@ def extract_file_with_report(
             "scan_headings_raw": int(scan_section_debug.get("raw_headings_detected", 0)),
             "scan_headings_left": int(scan_section_debug.get("column_left_headings", 0)),
             "scan_headings_right": int(scan_section_debug.get("column_right_headings", 0)),
+            "scan_heading_guard_warning": None,
             "section_debug": [],
         }
+        if not use_text_layer:
+            left_count = page_report["scan_headings_left"]
+            right_count = page_report["scan_headings_right"]
+            raw_count = page_report["scan_headings_raw"]
+            if raw_count > 0 and (left_count == 0 or right_count == 0):
+                side = "left" if right_count == 0 else "right"
+                page_report["scan_heading_guard_warning"] = (
+                    "Heading OCR appears one-sided "
+                    f"(left={left_count}, right={right_count}); "
+                    f"section split may be unreliable ({side}-only detection)."
+                )
 
         for section in sections:
             if section["section_type"] == "OPEN_ENDED":
@@ -1038,11 +1062,11 @@ def extract_file_with_report(
                 rows = extract_rows_for_section(page, section)
                 scanned_row_debug = {}
             else:
-                option_centers = _find_option_centers_scanned(section, page, img_bgr)
+                option_centers = _find_option_centers_scanned(section, page, img_raw_bgr)
                 scanned_rows_px, scanned_row_debug = extract_rows_for_section_scanned(
-                    img_bgr, section
+                    img_raw_bgr, section
                 )
-                rows = _rows_px_to_page(scanned_rows_px, page, img_bgr)
+                rows = _rows_px_to_page(scanned_rows_px, page, img_raw_bgr)
 
             section_answers = 0
             section_unanswered = 0

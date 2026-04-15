@@ -94,6 +94,19 @@ def extract_row_answers(
         return [], False, {}
 
     if section["section_type"] == "MATCH" and len(filled_labels) != 1:
+        if len(filled_labels) > 1 and probabilities:
+            ranked = sorted(probabilities.items(), key=lambda item: item[1], reverse=True)
+            top_label, top_prob = ranked[0]
+            second_prob = ranked[1][1] if len(ranked) > 1 else 0.0
+            confident_winner = (
+                top_prob >= BUBBLE_MODEL.config.strong_threshold
+                and (top_prob - second_prob) >= max(0.2, BUBBLE_MODEL.config.uncertainty_band * 2)
+            )
+            if confident_winner and top_label in output_map:
+                answers = [output_map[top_label]]
+                debug_scores = {f"score_{key}": value for key, value in scores.items()}
+                debug_scores.update({f"prob_{key}": value for key, value in probabilities.items()})
+                return answers, True, debug_scores
         return [], False, {}
 
     answers = [output_map[label] for label in filled_labels if label in output_map]

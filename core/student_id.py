@@ -10,16 +10,152 @@ import pytesseract
 from core.bubbles import sample_bubble_score
 from core.ocr_engine import detect_with_fallback
 
+
+def _parse_bracket_token(text: str) -> str | None:
+    m = re.search(r"\[(.*?)\]", text)
+    if not m:
+        return None
+    inside = m.group(1)
+    digits = [ch if ch.isdigit() else "0" for ch in inside]
+    if len(digits) < 5:
+        digits.extend(["0"] * (5 - len(digits)))
+    if not digits:
+        return "00000"
+    return "".join(digits[:5])
+
+
+def _find_studentnumber_bracket_bounds(roi_gray: np.ndarray) -> tuple[int, int, int, int] | None:
+    try:
+        data = pytesseract.image_to_data(
+            roi_gray,
+            config="--psm 6 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789[]",
+            output_type=pytesseract.Output.DICT,
+        )
+    except Exception:
+        return None
+
+    tokens: list[dict[str, float | str]] = []
+    for i, raw in enumerate(data.get("text", [])):
+        text = (raw or "").strip()
+        if not text:
+            continue
+        try:
+            conf = float(data["conf"][i])
+        except Exception:
+            conf = -1.0
+        if conf < 20.0:
+            continue
+        x = int(data["left"][i])
+        y = int(data["top"][i])
+        w = int(data["width"][i])
+        h = int(data["height"][i])
+        tokens.append({"text": text, "norm": re.sub(r"[^A-Z0-9\[\]]", "", text.upper()), "x": x, "y": y, "w": w, "h": h})
+
+    if not tokens:
+        return None
+
+    heading = next((t for t in tokens if "STUDENTNUMBER" in str(t["norm"])), None)
+
+    # Best-case: OCR returns the full bracket token in one piece.
+    for tok in tokens:
+        parsed = _parse_bracket_token(str(tok["text"]))
+        if parsed is None:
+            continue
+        x = int(tok["x"])
+        y = int(tok["y"])
+        w = int(tok["w"])
+        h = int(tok["h"])
+        return x, y, x + w, y + h
+
+    # Next: find separate [ and ] tokens on a row under STUDENTNUMBER.
+    lefts = [t for t in tokens if "[" in str(t["text"])]
+    rights = [t for t in tokens if "]" in str(t["text"])]
+    if heading:
+        h_y = int(heading["y"])
+        h_h = int(heading["h"])
+        lefts = [t for t in lefts if int(t["y"]) >= h_y + int(0.5 * h_h)]
+        rights = [t for t in rights if int(t["y"]) >= h_y + int(0.5 * h_h)]
+
+    for left in lefts:
+        lx = int(left["x"])
+        ly = int(left["y"])
+        lh = int(left["h"])
+        candidates = [r for r in rights if int(r["x"]) > lx + 20 and abs(int(r["y"]) - ly) <= max(12, lh)]
+        if not candidates:
+            continue
+        right = min(candidates, key=lambda r: int(r["x"]))
+        rx = int(right["x"]) + int(right["w"])
+        y0 = max(0, min(ly, int(right["y"])) - 2)
+        y1 = min(roi_gray.shape[0], max(ly + lh, int(right["y"]) + int(right["h"])) + 2)
+        return lx, y0, rx, y1
+
+    return None
+
+
+def _extract_bracket_digits_by_slots(roi_gray: np.ndarray, bounds: tuple[int, int, int, int]) -> tuple[str, bool]:
+    x0, y0, x1, y1 = bounds
+    x0 = max(0, min(x0, roi_gray.shape[1] - 1))
+    x1 = max(x0 + 1, min(x1, roi_gray.shape[1]))
+    y0 = max(0, min(y0, roi_gray.shape[0] - 1))
+    y1 = max(y0 + 1, min(y1, roi_gray.shape[0]))
+    bracket_roi = roi_gray[y0:y1, x0:x1]
+    if bracket_roi.size == 0:
+        return "00000", True
+
+    digits: list[str] = []
+    low_conf = False
+    for slot in range(5):
+        sx0 = int(round(slot * bracket_roi.shape[1] / 5.0))
+        sx1 = int(round((slot + 1) * bracket_roi.shape[1] / 5.0))
+        if sx1 <= sx0:
+            digits.append("0")
+            low_conf = True
+            continue
+        cell = bracket_roi[:, sx0:sx1]
+        if cell.size == 0:
+            digits.append("0")
+            low_conf = True
+            continue
+
+        cell = cv2.copyMakeBorder(cell, 3, 3, 3, 3, cv2.BORDER_CONSTANT, value=255)
+        _, th = cv2.threshold(cell, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        inv = cv2.bitwise_not(th)
+        hit = detect_with_fallback(
+            [cell, th, inv],
+            pattern=r"\d",
+            min_len=1,
+            max_len=1,
+            tesseract_configs=[
+                "--psm 10 -c tessedit_char_whitelist=0123456789",
+                "--psm 13 -c tessedit_char_whitelist=0123456789",
+            ],
+            min_tesseract_confidence=45.0,
+        )
+        if hit and hit.text.isdigit():
+            digits.append(hit.text)
+            if hit.confidence < 55.0:
+                low_conf = True
+        else:
+            digits.append("0")
+            low_conf = True
+    return "".join(digits), low_conf
+
+
 def extract_student_id_handwritten_ocr(img_bgr: np.ndarray) -> tuple[str | None, bool]:
     h, w = img_bgr.shape[:2]
     x0 = int(0.02 * w)
     x1 = int(0.48 * w)
-    y0 = int(0.13 * h)
-    y1 = int(0.21 * h)
+    y0 = int(0.10 * h)
+    y1 = int(0.24 * h)
 
     roi = img_bgr[y0:y1, x0:x1]
     gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
     gray = cv2.GaussianBlur(gray, (3, 3), 0)
+
+    bracket_bounds = _find_studentnumber_bracket_bounds(gray)
+    if bracket_bounds is not None:
+        digits, low_conf = _extract_bracket_digits_by_slots(gray, bracket_bounds)
+        return digits, low_conf
 
     variants: list[np.ndarray] = []
     variants.append(gray)
@@ -43,6 +179,10 @@ def extract_student_id_handwritten_ocr(img_bgr: np.ndarray) -> tuple[str | None,
         min_tesseract_confidence=45.0,
     )
     if match:
+        bracket_parse = _parse_bracket_token(match.text)
+        if bracket_parse is not None:
+            return bracket_parse, match.confidence < 55.0
+
         normalized = re.sub(r"\D", "", match.text)
         if len(normalized) == 5:
             return normalized, match.confidence < 55.0

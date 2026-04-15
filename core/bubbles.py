@@ -89,10 +89,12 @@ def extract_row_answers(
 
     needs_review = model_review
     if section["section_type"] == "TF" and len(filled_labels) != 1:
-        needs_review = True
+        # When both T/F are detected (or neither), normalize to unanswered
+        # without forcing manual review; this is treated as a blank TF response.
+        return [], False, {}
 
     if section["section_type"] == "MATCH" and len(filled_labels) != 1:
-        needs_review = True
+        return [], False, {}
 
     answers = [output_map[label] for label in filled_labels if label in output_map]
     if not answers:

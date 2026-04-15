@@ -312,6 +312,7 @@ def detect_section_blocks_scanned(
 
     left_col = [item for item in found if item[2] <= mid_x]
     right_col = [item for item in found if item[2] > mid_x]
+    used_studentnumber_half_split = False
 
     def _split_columns_by_heading_clusters(
         items: list[tuple[str, int, int]]
@@ -391,7 +392,16 @@ def detect_section_blocks_scanned(
             return None
         return split_left, split_right
 
-    if (not left_col or not right_col) and len(found) >= 4:
+    if studentnumber_anchor_y is not None and len(found) >= 2:
+        # Preferred path requested for this layout: once we detect the
+        # STUDENTNUMBER anchor, split the content below it into equal halves.
+        anchor_left = [item for item in found if item[2] <= mid_x]
+        anchor_right = [item for item in found if item[2] > mid_x]
+        if anchor_left and anchor_right:
+            left_col, right_col = anchor_left, anchor_right
+            used_studentnumber_half_split = True
+
+    if (not used_studentnumber_half_split) and (not left_col or not right_col) and len(found) >= 4:
         clustered = _split_columns_by_heading_clusters(found)
         if clustered is not None:
             left_col, right_col = clustered
@@ -399,19 +409,6 @@ def detect_section_blocks_scanned(
             split_by_gap = _split_columns_by_largest_x_gap(found)
             if split_by_gap is not None:
                 left_col, right_col = split_by_gap
-
-    if studentnumber_anchor_y is not None and len(found) >= 4:
-        smaller = min(len(left_col), len(right_col))
-        larger = max(len(left_col), len(right_col))
-        imbalance_ratio = (smaller / larger) if larger else 0.0
-        if smaller == 0 or imbalance_ratio <= 0.25:
-            anchor_candidates = [item for item in found if item[1] >= (studentnumber_anchor_y - 20)]
-            if len(anchor_candidates) >= 4:
-                split_x = w // 2
-                anchor_left = [item for item in anchor_candidates if item[2] <= split_x]
-                anchor_right = [item for item in anchor_candidates if item[2] > split_x]
-                if anchor_left and anchor_right:
-                    left_col, right_col = anchor_left, anchor_right
 
     def _build_column_blocks(
         column_items: list[tuple[str, int, int]], x0: int, x1: int

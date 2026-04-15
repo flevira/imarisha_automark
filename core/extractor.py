@@ -318,10 +318,44 @@ def detect_section_blocks_scanned(
             return None
         return clustered_left, clustered_right
 
+    def _split_columns_by_largest_x_gap(
+        items: list[tuple[str, int, int]]
+    ) -> tuple[list[tuple[str, int, int]], list[tuple[str, int, int]]] | None:
+        if len(items) < 4:
+            return None
+
+        ordered = sorted(items, key=lambda item: item[2])
+        xs = [int(item[2]) for item in ordered]
+        if len(xs) < 4:
+            return None
+
+        max_gap = -1
+        split_idx = -1
+        for idx in range(len(xs) - 1):
+            gap = xs[idx + 1] - xs[idx]
+            if gap > max_gap:
+                max_gap = gap
+                split_idx = idx
+
+        min_gap = max(30, int(w * 0.05))
+        if max_gap < min_gap:
+            return None
+
+        cut_x = (xs[split_idx] + xs[split_idx + 1]) / 2.0
+        split_left = [item for item in items if item[2] <= cut_x]
+        split_right = [item for item in items if item[2] > cut_x]
+        if not split_left or not split_right:
+            return None
+        return split_left, split_right
+
     if (not left_col or not right_col) and len(found) >= 4:
         clustered = _split_columns_by_heading_clusters(found)
         if clustered is not None:
             left_col, right_col = clustered
+        else:
+            split_by_gap = _split_columns_by_largest_x_gap(found)
+            if split_by_gap is not None:
+                left_col, right_col = split_by_gap
 
     def _build_column_blocks(
         column_items: list[tuple[str, int, int]], x0: int, x1: int
@@ -391,6 +425,44 @@ def extract_question_ids_from_roi(roi_bgr: np.ndarray) -> str | None:
         min_tesseract_confidence=50.0,
     )
     return match.text if match else None
+
+
+def extract_question_id_with_fallbacks(
+    row_roi_bgr: np.ndarray,
+    *,
+    section_type: str,
+) -> str | None:
+    if row_roi_bgr.size == 0:
+        return None
+
+    h, w = row_roi_bgr.shape[:2]
+    if h <= 2 or w <= 2:
+        return None
+
+    def _slice(x_start_ratio: float, x_end_ratio: float) -> np.ndarray:
+        x0 = max(0, min(w - 1, int(round(w * x_start_ratio))))
+        x1 = max(x0 + 1, min(w, int(round(w * x_end_ratio))))
+        return row_roi_bgr[:, x0:x1]
+
+    qid = extract_question_ids_from_roi(_slice(0.0, 0.35))
+    if qid:
+        return qid
+
+    # Scanned pages often have slight section x-boundary drift. Probe a wider
+    # area to recover the QID when the narrow left crop misses the printed text.
+    fallback_windows = [
+        (0.0, 0.50),
+        (0.05, 0.60),
+        (0.0, 0.70),
+    ]
+    if section_type == "MATCH":
+        fallback_windows.extend([(0.10, 0.65), (0.15, 0.70)])
+
+    for start, end in fallback_windows:
+        qid = extract_question_ids_from_roi(_slice(start, end))
+        if qid:
+            return qid
+    return None
 
 
 def extract_item_numbers_from_roi(roi_bgr: np.ndarray) -> int | None:
@@ -518,8 +590,11 @@ def extract_rows_for_section_scanned(
         if y_abs1 <= y_abs0:
             continue
 
-        left_roi = img_bgr[y_abs0:y_abs1, x0 : x0 + qid_x1_local]
-        qid = extract_question_ids_from_roi(left_roi)
+        row_roi = img_bgr[y_abs0:y_abs1, x0:x1]
+        qid = extract_question_id_with_fallbacks(
+            row_roi,
+            section_type=str(section["section_type"]),
+        )
         needs_review = False
         if not qid:
             missing_qid += 1

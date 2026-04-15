@@ -597,15 +597,6 @@ def extract_rows_for_section_scanned(
         x_offset=x0,
         y_offset=y0,
     )
-    item_candidates = (
-        _extract_scanned_item_candidates(
-            section_roi_bgr=section_roi,
-            x_offset=x0,
-            y_offset=y0,
-        )
-        if section["section_type"] == "MATCH"
-        else []
-    )
     for yb0, yb1 in refined_bands:
         y_abs0 = y0 + yb0
         y_abs1 = y0 + yb1
@@ -630,16 +621,10 @@ def extract_rows_for_section_scanned(
 
         item_number = None
         if section["section_type"] == "MATCH":
-            item_number = _pick_item_number_for_row_from_candidates(
-                item_candidates=item_candidates,
-                y_abs0=y_abs0,
-                y_abs1=y_abs1,
-            )
             item_roi = img_bgr[
                 y_abs0:y_abs1, x0 + item_x0_local : x0 + item_x1_local
             ]
-            if item_number is None:
-                item_number = extract_item_numbers_from_roi(item_roi)
+            item_number = extract_item_numbers_from_roi(item_roi)
             if item_number is None:
                 rows_dropped_missing_item_number += 1
                 continue

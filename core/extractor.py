@@ -160,7 +160,11 @@ def align_scanned_page_to_template(img_bgr: np.ndarray) -> np.ndarray:
     return aligned
 
 
-def detect_section_blocks_scanned(img_bgr: np.ndarray) -> list[dict[str, Any]]:
+def detect_section_blocks_scanned(
+    img_bgr: np.ndarray,
+    *,
+    return_debug: bool = False,
+) -> list[dict[str, Any]] | tuple[list[dict[str, Any]], dict[str, Any]]:
     data = _ocr_data(img_bgr, psm=6)
 
     def _levenshtein(a: str, b: str, max_dist: int = 2) -> int:
@@ -248,7 +252,14 @@ def detect_section_blocks_scanned(img_bgr: np.ndarray) -> list[dict[str, Any]]:
         found = _find_sections(min_conf=10.0)
 
     if not found:
-        return []
+        empty_debug = {
+            "raw_headings_detected": 0,
+            "column_left_headings": 0,
+            "column_right_headings": 0,
+            "left_column_sections": 0,
+            "right_column_sections": 0,
+        }
+        return ([], empty_debug) if return_debug else []
 
     h = img_bgr.shape[0]
     w = img_bgr.shape[1]
@@ -291,10 +302,19 @@ def detect_section_blocks_scanned(img_bgr: np.ndarray) -> list[dict[str, Any]]:
                 )
         return col_blocks
 
-    blocks.extend(_build_column_blocks(left_col, 0, mid_x - margin))
-    blocks.extend(_build_column_blocks(right_col, mid_x + margin, w))
+    left_blocks = _build_column_blocks(left_col, 0, mid_x - margin)
+    right_blocks = _build_column_blocks(right_col, mid_x + margin, w)
+    blocks.extend(left_blocks)
+    blocks.extend(right_blocks)
     print(f"[extractor][scanned] detected sections: {len(blocks)}")
-    return blocks
+    debug = {
+        "raw_headings_detected": len(found),
+        "column_left_headings": len(left_col),
+        "column_right_headings": len(right_col),
+        "left_column_sections": len(left_blocks),
+        "right_column_sections": len(right_blocks),
+    }
+    return (blocks, debug) if return_debug else blocks
 
 
 def extract_question_ids_from_roi(roi_bgr: np.ndarray) -> str | None:
@@ -341,24 +361,34 @@ def extract_item_numbers_from_roi(roi_bgr: np.ndarray) -> int | None:
 
 def extract_rows_for_section_scanned(
     img_bgr: np.ndarray, section: dict[str, Any]
-) -> list[dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    debug: dict[str, Any] = {
+        "header_offset_px": 0,
+        "bands_raw_count": 0,
+        "bands_merged_count": 0,
+        "bands_refined_count": 0,
+        "rows_candidate_count": 0,
+        "rows_dropped_missing_item_number": 0,
+        "rows_missing_question_id": 0,
+    }
     y0 = max(0, int(section["y0_px"]))
     y1 = min(img_bgr.shape[0], int(section["y1_px"]))
     if y1 <= y0:
-        return []
+        return [], debug
 
     x0 = max(0, int(section.get("x0_px", 0)))
     x1 = min(img_bgr.shape[1], int(section.get("x1_px", img_bgr.shape[1])))
     if x1 <= x0:
-        return []
+        return [], debug
 
     section_roi = img_bgr[y0:y1, x0:x1]
     data_start_offset = _find_scanned_table_header_bottom(section_roi)
     if data_start_offset is not None and data_start_offset > 0:
+        debug["header_offset_px"] = int(data_start_offset)
         y0 = min(y1, y0 + data_start_offset)
         section_roi = img_bgr[y0:y1, x0:x1]
         if section_roi.size == 0:
-            return []
+            return [], debug
     gray = cv2.cvtColor(section_roi, cv2.COLOR_BGR2GRAY)
     _, bw = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
 
@@ -382,9 +412,10 @@ def extract_rows_for_section_scanned(
     if start is not None and (len(active) - start) >= 5:
         bands.append((start, len(active) - 1))
 
+    debug["bands_raw_count"] = len(bands)
     if not bands:
         print(f"[extractor][scanned] rows in {section['section_type']}: 0 (missing question_id: 0)")
-        return []
+        return [], debug
 
     section_h = max(1, y1 - y0)
     min_row_h = max(10, int(section_h * 0.015))
@@ -402,6 +433,7 @@ def extract_rows_for_section_scanned(
         else:
             merged_bands.append((b0, b1))
 
+    debug["bands_merged_count"] = len(merged_bands)
     refined_bands: list[tuple[int, int]] = []
     for b0, b1 in merged_bands:
         height = b1 - b0
@@ -419,12 +451,14 @@ def extract_rows_for_section_scanned(
             continue
         refined_bands.append((b0, b1))
 
+    debug["bands_refined_count"] = len(refined_bands)
     row_candidates: list[dict[str, Any]] = []
     section_w = max(1, x1 - x0)
     qid_x1_local = int(section_w * 0.35)
     item_x0_local = int(section_w * 0.18)
 
     missing_qid = 0
+    rows_dropped_missing_item_number = 0
     for yb0, yb1 in refined_bands:
         y_abs0 = y0 + yb0
         y_abs1 = y0 + yb1
@@ -445,6 +479,7 @@ def extract_rows_for_section_scanned(
             ]
             item_number = extract_item_numbers_from_roi(item_roi)
             if item_number is None:
+                rows_dropped_missing_item_number += 1
                 continue
 
         row_candidates.append(
@@ -459,12 +494,15 @@ def extract_rows_for_section_scanned(
         )
 
     rows = _dedupe_scanned_row_candidates(row_candidates)
+    debug["rows_candidate_count"] = len(row_candidates)
+    debug["rows_dropped_missing_item_number"] = rows_dropped_missing_item_number
+    debug["rows_missing_question_id"] = missing_qid
 
     print(
         f"[extractor][scanned] rows in {section['section_type']}: {len(rows)} "
         f"(missing question_id: {missing_qid})"
     )
-    return rows
+    return rows, debug
 
 
 def _find_scanned_table_header_bottom(section_roi_bgr: np.ndarray) -> int | None:
@@ -693,7 +731,7 @@ def _rows_px_to_page(
     return rows
 
 
-def render_page_to_bgr(page: fitz.Page, zoom: float = RENDER_ZOOM) -> np.ndarray:
+def render_page_raw_to_bgr(page: fitz.Page, zoom: float = RENDER_ZOOM) -> np.ndarray:
     pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom), alpha=False)
     img = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width, pix.n)
     if pix.n == 4:
@@ -702,7 +740,10 @@ def render_page_to_bgr(page: fitz.Page, zoom: float = RENDER_ZOOM) -> np.ndarray
         img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
     elif pix.n == 1:
         img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+    return img
 
+
+def preprocess_scanned_for_omr(img: np.ndarray) -> np.ndarray:
     # 1) Grayscale base + scan-brightness normalization.
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     brightness = float(np.mean(gray))
@@ -762,6 +803,10 @@ def render_page_to_bgr(page: fitz.Page, zoom: float = RENDER_ZOOM) -> np.ndarray
 
     # Keep downstream contracts unchanged (3-channel BGR image).
     return cv2.cvtColor(preprocessed, cv2.COLOR_GRAY2BGR)
+
+
+def render_page_to_bgr(page: fitz.Page, zoom: float = RENDER_ZOOM) -> np.ndarray:
+    return preprocess_scanned_for_omr(render_page_raw_to_bgr(page, zoom=zoom))
 
 
 def _sorted_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -862,12 +907,18 @@ def _format_extraction_report(
                 f"  1) Mode: {page_report['mode']}",
                 f"  2) Sections detected: {page_report['sections_detected_total']} "
                 f"(usable: {page_report['sections_used']})",
+                f"     - scanned heading OCR: raw={page_report.get('scan_headings_raw', 0)}, "
+                f"left={page_report.get('scan_headings_left', 0)}, "
+                f"right={page_report.get('scan_headings_right', 0)}",
                 f"  3) Rows detected before OMR: {page_report['rows_detected_total']}",
                 f"  4) OMR answers detected: {page_report['answers_detected_total']}",
                 f"  5) Unanswered rows after OMR: {page_report['rows_unanswered_total']}",
                 f"  6) Rows flagged for review: {page_report['rows_needing_review_total']}",
             ]
         )
+        scan_heading_guard_warning = page_report.get("scan_heading_guard_warning")
+        if scan_heading_guard_warning:
+            lines.append(f"     - ⚠️ {scan_heading_guard_warning}")
 
         section_debug = page_report.get("section_debug", [])
         if section_debug:
@@ -878,7 +929,14 @@ def _format_extraction_report(
                     f"{item['section_type']}: rows={item['rows_detected']}, "
                     f"answered={item['answers_detected']}, "
                     f"missing_qid={item['rows_missing_question_id']}, "
-                    f"missing_option_centers={item['missing_option_centers']}"
+                    f"missing_option_centers={item['missing_option_centers']}, "
+                    f"bands(raw/merged/refined)="
+                    f"{item.get('bands_raw_count', 0)}/"
+                    f"{item.get('bands_merged_count', 0)}/"
+                    f"{item.get('bands_refined_count', 0)}, "
+                    f"header_skip_px={item.get('header_offset_px', 0)}, "
+                    f"rows_dropped_missing_item_number="
+                    f"{item.get('rows_dropped_missing_item_number', 0)}"
                 )
         lines.append("")
 
@@ -894,20 +952,22 @@ def extract_file_with_report(
 
     for page_idx in range(len(doc)):
         page = doc[page_idx]
-        img_bgr = render_page_to_bgr(page)
+        img_raw_bgr = render_page_raw_to_bgr(page)
+        img_bgr = preprocess_scanned_for_omr(img_raw_bgr)
         page_number = page_idx + 1
         use_text_layer = has_usable_text_layer(page)
-        estimated_skew = _estimate_skew_correction_degrees(img_bgr)
+        estimated_skew = _estimate_skew_correction_degrees(img_raw_bgr)
         if use_text_layer and abs(estimated_skew) >= TEXT_LAYER_SKEW_FALLBACK_DEG:
             # Some scanned PDFs include an OCR text layer. Their word coordinates are
             # often unreliable when the underlying scan is skewed, so force scanned
             # mode so deskew/alignment can be applied consistently.
             use_text_layer = False
         if not use_text_layer:
-            img_bgr = normalize_scanned_page_rotation(img_bgr)
-            img_bgr = align_scanned_page_to_template(img_bgr)
+            img_raw_bgr = normalize_scanned_page_rotation(img_raw_bgr)
+            img_raw_bgr = align_scanned_page_to_template(img_raw_bgr)
+            img_bgr = preprocess_scanned_for_omr(img_raw_bgr)
         quality_metrics = _compute_scan_quality_metrics(
-            img_bgr=img_bgr,
+            img_bgr=img_raw_bgr,
             estimated_skew=estimated_skew,
             used_text_layer=use_text_layer,
         )
@@ -916,7 +976,7 @@ def extract_file_with_report(
             f"{'text-layer mode' if use_text_layer else 'scanned-image mode'}"
         )
 
-        qr_raw = decode_qr_robust(img_bgr)
+        qr_raw = decode_qr_robust(img_raw_bgr)
         qr_parsed = parse_qr_data(qr_raw) if qr_raw else {}
         qr_student_id = qr_parsed.get("studentid")
         qr_student_name = qr_parsed.get("studentname")
@@ -929,8 +989,8 @@ def extract_file_with_report(
         elif qr_type == "TEST":
             test_id = qr_parsed.get("testid") or qr_parsed.get("assessmentid")
 
-        bubble_id, _ = extract_student_id_bubble(img_bgr)
-        handwritten_id, _ = extract_student_id_handwritten_ocr(img_bgr)
+        bubble_id, _ = extract_student_id_bubble(img_raw_bgr)
+        handwritten_id, _ = extract_student_id_handwritten_ocr(img_raw_bgr)
 
         id_info = resolve_student_id(
             qr_id=qr_student_id,
@@ -958,11 +1018,13 @@ def extract_file_with_report(
             **quality_metrics,
         }
 
-        sections = (
-            detect_section_blocks(page)
-            if use_text_layer
-            else detect_section_blocks_scanned(img_bgr)
-        )
+        scan_section_debug: dict[str, Any] = {}
+        if use_text_layer:
+            sections = detect_section_blocks(page)
+        else:
+            sections, scan_section_debug = detect_section_blocks_scanned(
+                img_raw_bgr, return_debug=True
+            )
         page_report: dict[str, Any] = {
             "page": page_number,
             "mode": "text-layer" if use_text_layer else "scanned-image",
@@ -972,8 +1034,23 @@ def extract_file_with_report(
             "answers_detected_total": 0,
             "rows_unanswered_total": 0,
             "rows_needing_review_total": 0,
+            "scan_headings_raw": int(scan_section_debug.get("raw_headings_detected", 0)),
+            "scan_headings_left": int(scan_section_debug.get("column_left_headings", 0)),
+            "scan_headings_right": int(scan_section_debug.get("column_right_headings", 0)),
+            "scan_heading_guard_warning": None,
             "section_debug": [],
         }
+        if not use_text_layer:
+            left_count = page_report["scan_headings_left"]
+            right_count = page_report["scan_headings_right"]
+            raw_count = page_report["scan_headings_raw"]
+            if raw_count > 0 and (left_count == 0 or right_count == 0):
+                side = "left" if right_count == 0 else "right"
+                page_report["scan_heading_guard_warning"] = (
+                    "Heading OCR appears one-sided "
+                    f"(left={left_count}, right={right_count}); "
+                    f"section split may be unreliable ({side}-only detection)."
+                )
 
         for section in sections:
             if section["section_type"] == "OPEN_ENDED":
@@ -983,11 +1060,13 @@ def extract_file_with_report(
             if use_text_layer:
                 option_centers = find_option_centers(page, section)
                 rows = extract_rows_for_section(page, section)
+                scanned_row_debug = {}
             else:
-                option_centers = _find_option_centers_scanned(section, page, img_bgr)
-                rows = _rows_px_to_page(
-                    extract_rows_for_section_scanned(img_bgr, section), page, img_bgr
+                option_centers = _find_option_centers_scanned(section, page, img_raw_bgr)
+                scanned_rows_px, scanned_row_debug = extract_rows_for_section_scanned(
+                    img_raw_bgr, section
                 )
+                rows = _rows_px_to_page(scanned_rows_px, page, img_raw_bgr)
 
             section_answers = 0
             section_unanswered = 0
@@ -1047,6 +1126,13 @@ def extract_file_with_report(
                     "missing_option_centers": ",".join(missing_option_centers)
                     if missing_option_centers
                     else "none",
+                    "bands_raw_count": int(scanned_row_debug.get("bands_raw_count", 0)),
+                    "bands_merged_count": int(scanned_row_debug.get("bands_merged_count", 0)),
+                    "bands_refined_count": int(scanned_row_debug.get("bands_refined_count", 0)),
+                    "header_offset_px": int(scanned_row_debug.get("header_offset_px", 0)),
+                    "rows_dropped_missing_item_number": int(
+                        scanned_row_debug.get("rows_dropped_missing_item_number", 0)
+                    ),
                 }
             )
         page_reports.append(page_report)

@@ -95,3 +95,17 @@ def test_detect_section_blocks_scanned_uses_studentnumber_anchor_for_column_spli
     assert section_types.count("TF") == 2
     assert debug["column_left_headings"] == 2
     assert debug["column_right_headings"] == 2
+
+
+def test_detect_vertical_column_divider_x_finds_separator_line() -> None:
+    img = np.full((1200, 900, 3), 255, dtype=np.uint8)
+    # Synthetic vertical divider in the center area.
+    img[260:1160, 452:456, :] = 0
+
+    split_x = extractor_module._detect_vertical_column_divider_x(
+        img_bgr=img,
+        y_start=240,
+    )
+
+    assert split_x is not None
+    assert abs(split_x - 454) <= 2

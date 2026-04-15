@@ -310,10 +310,17 @@ def detect_section_blocks_scanned(
     margin = max(10, int(w * 0.03))
     blocks: list[dict[str, Any]] = []
 
+    split_x = _detect_vertical_column_divider_x(
+        img_bgr=img_bgr,
+        y_start=max(0, studentnumber_anchor_y or 0),
+    )
+    if split_x is None:
+        split_x = mid_x
+
     # Use one deterministic split strategy only:
-    # headings below STUDENTNUMBER (when present), then split by page midpoint.
-    left_col = [item for item in found if item[2] <= mid_x]
-    right_col = [item for item in found if item[2] > mid_x]
+    # headings below STUDENTNUMBER (when present), then split by divider/midpoint.
+    left_col = [item for item in found if item[2] <= split_x]
+    right_col = [item for item in found if item[2] > split_x]
 
     def _build_column_blocks(
         column_items: list[tuple[str, int, int]], x0: int, x1: int
@@ -347,8 +354,8 @@ def detect_section_blocks_scanned(
                 )
         return col_blocks
 
-    left_blocks = _build_column_blocks(left_col, 0, mid_x - margin)
-    right_blocks = _build_column_blocks(right_col, mid_x + margin, w)
+    left_blocks = _build_column_blocks(left_col, 0, split_x - margin)
+    right_blocks = _build_column_blocks(right_col, split_x + margin, w)
     blocks.extend(left_blocks)
     blocks.extend(right_blocks)
     print(f"[extractor][scanned] detected sections: {len(blocks)}")
@@ -358,8 +365,52 @@ def detect_section_blocks_scanned(
         "column_right_headings": len(right_col),
         "left_column_sections": len(left_blocks),
         "right_column_sections": len(right_blocks),
+        "column_split_x_px": int(split_x),
+        "column_split_source": "divider" if split_x != mid_x else "midpoint",
     }
     return (blocks, debug) if return_debug else blocks
+
+
+def _detect_vertical_column_divider_x(
+    *,
+    img_bgr: np.ndarray,
+    y_start: int,
+) -> int | None:
+    if img_bgr.size == 0:
+        return None
+
+    h, w = img_bgr.shape[:2]
+    y0 = max(0, min(h - 1, int(y_start)))
+    roi = img_bgr[y0:h, :]
+    if roi.size == 0:
+        return None
+
+    gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+    _, bw = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+    kernel_h = max(25, int(roi.shape[0] * 0.08))
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1, kernel_h))
+    vertical = cv2.morphologyEx(bw, cv2.MORPH_OPEN, kernel)
+
+    col_counts = np.sum(vertical > 0, axis=0).astype(np.float32)
+    if col_counts.size < 10:
+        return None
+
+    x_lo = int(w * 0.3)
+    x_hi = int(w * 0.7)
+    if x_hi <= x_lo:
+        return None
+
+    search = col_counts[x_lo:x_hi]
+    if search.size == 0:
+        return None
+
+    best_idx = int(np.argmax(search))
+    best_strength = float(search[best_idx])
+    min_strength = max(20.0, float(roi.shape[0] * 0.28))
+    if best_strength < min_strength:
+        return None
+
+    return x_lo + best_idx
 
 
 def extract_question_ids_from_roi(roi_bgr: np.ndarray) -> str | None:

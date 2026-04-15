@@ -637,17 +637,29 @@ def extract_rows_for_section_scanned(
 
     missing_qid = 0
     rows_dropped_missing_item_number = 0
+    qid_candidates = _extract_scanned_qid_candidates(
+        section_roi_bgr=section_roi,
+        section_type=str(section["section_type"]),
+        x_offset=x0,
+        y_offset=y0,
+    )
     for yb0, yb1 in refined_bands:
         y_abs0 = y0 + yb0
         y_abs1 = y0 + yb1
         if y_abs1 <= y_abs0:
             continue
 
-        row_roi = img_bgr[y_abs0:y_abs1, x0:x1]
-        qid = extract_question_id_with_fallbacks(
-            row_roi,
-            section_type=str(section["section_type"]),
+        qid = _pick_qid_for_row_from_candidates(
+            qid_candidates=qid_candidates,
+            y_abs0=y_abs0,
+            y_abs1=y_abs1,
         )
+        row_roi = img_bgr[y_abs0:y_abs1, x0:x1]
+        if not qid:
+            qid = extract_question_id_with_fallbacks(
+                row_roi,
+                section_type=str(section["section_type"]),
+            )
         needs_review = False
         if not qid:
             missing_qid += 1
@@ -684,6 +696,88 @@ def extract_rows_for_section_scanned(
         f"(missing question_id: {missing_qid})"
     )
     return rows, debug
+
+
+def _extract_scanned_qid_candidates(
+    section_roi_bgr: np.ndarray,
+    *,
+    section_type: str,
+    x_offset: int,
+    y_offset: int,
+) -> list[dict[str, float | str]]:
+    if section_roi_bgr.size == 0:
+        return []
+
+    h, w = section_roi_bgr.shape[:2]
+    x_limit_ratio = 0.72 if section_type == "MATCH" else 0.62
+    x_limit = int(max(10, w * x_limit_ratio))
+
+    candidates: list[dict[str, float | str]] = []
+    for psm in (6, 11):
+        data = _ocr_data(section_roi_bgr, psm=psm)
+        for i, txt in enumerate(data["text"]):
+            token = re.sub(r"[^0-9]", "", (txt or ""))
+            if not re.fullmatch(r"\d{5,6}", token):
+                continue
+            try:
+                conf = float(data["conf"][i])
+            except Exception:
+                conf = -1.0
+            if conf < 25:
+                continue
+
+            left = int(data["left"][i])
+            width = int(data["width"][i])
+            if left > x_limit:
+                continue
+
+            top = int(data["top"][i])
+            height = int(data["height"][i])
+            y_center = y_offset + top + (height / 2.0)
+            x_center = x_offset + left + (width / 2.0)
+            candidates.append(
+                {
+                    "question_id": token,
+                    "y_center": float(y_center),
+                    "x_center": float(x_center),
+                }
+            )
+
+    if not candidates:
+        return []
+
+    deduped: dict[tuple[str, int], dict[str, float | str]] = {}
+    for cand in candidates:
+        qid = str(cand["question_id"])
+        y_bucket = int(round(float(cand["y_center"]) / 8.0))
+        deduped[(qid, y_bucket)] = cand
+
+    return sorted(deduped.values(), key=lambda c: float(c["y_center"]))
+
+
+def _pick_qid_for_row_from_candidates(
+    *,
+    qid_candidates: list[dict[str, float | str]],
+    y_abs0: int,
+    y_abs1: int,
+) -> str | None:
+    if not qid_candidates:
+        return None
+
+    row_center = (y_abs0 + y_abs1) / 2.0
+    row_h = max(6.0, float(y_abs1 - y_abs0))
+    max_dist = max(20.0, row_h * 1.35)
+
+    best_qid: str | None = None
+    best_dist = float("inf")
+    for cand in qid_candidates:
+        y = float(cand["y_center"])
+        dist = abs(y - row_center)
+        if dist <= max_dist and dist < best_dist:
+            best_qid = str(cand["question_id"])
+            best_dist = dist
+
+    return best_qid
 
 
 def _find_scanned_table_header_bottom(section_roi_bgr: np.ndarray) -> int | None:

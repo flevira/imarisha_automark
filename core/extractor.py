@@ -251,6 +251,49 @@ def detect_section_blocks_scanned(
     if not found:
         found = _find_sections(min_conf=10.0)
 
+    def _find_studentnumber_anchor_y() -> int | None:
+        line_tokens: dict[tuple[int, int, int, int], list[tuple[str, int, int]]] = {}
+        for i, txt in enumerate(data["text"]):
+            token = (txt or "").strip()
+            if not token:
+                continue
+            try:
+                conf = float(data["conf"][i])
+            except Exception:
+                conf = -1.0
+            if conf < 12.0:
+                continue
+
+            key = (
+                int(data["block_num"][i]),
+                int(data["par_num"][i]),
+                int(data["line_num"][i]),
+                int(data["page_num"][i]),
+            )
+            top = int(data["top"][i])
+            height = int(data["height"][i])
+            line_tokens.setdefault(key, []).append((token.upper(), top, height))
+
+        best_anchor: int | None = None
+        for words in line_tokens.values():
+            normalized = re.sub(
+                r"[^A-Z]",
+                "",
+                "".join(token for token, *_ in words),
+            )
+            if "STUDENTNUMBER" not in normalized:
+                continue
+            line_bottom = max(top + h for _, top, h in words)
+            if best_anchor is None or line_bottom > best_anchor:
+                best_anchor = line_bottom
+        return best_anchor
+
+    studentnumber_anchor_y = _find_studentnumber_anchor_y()
+    if studentnumber_anchor_y is not None and found:
+        filtered = [item for item in found if item[1] >= (studentnumber_anchor_y - 20)]
+        if len(filtered) >= 2:
+            found = filtered
+
     if not found:
         empty_debug = {
             "raw_headings_detected": 0,
@@ -269,6 +312,7 @@ def detect_section_blocks_scanned(
 
     left_col = [item for item in found if item[2] <= mid_x]
     right_col = [item for item in found if item[2] > mid_x]
+    used_studentnumber_half_split = False
 
     def _split_columns_by_heading_clusters(
         items: list[tuple[str, int, int]]
@@ -348,7 +392,16 @@ def detect_section_blocks_scanned(
             return None
         return split_left, split_right
 
-    if (not left_col or not right_col) and len(found) >= 4:
+    if studentnumber_anchor_y is not None and len(found) >= 2:
+        # Preferred path requested for this layout: once we detect the
+        # STUDENTNUMBER anchor, split the content below it into equal halves.
+        anchor_left = [item for item in found if item[2] <= mid_x]
+        anchor_right = [item for item in found if item[2] > mid_x]
+        if anchor_left and anchor_right:
+            left_col, right_col = anchor_left, anchor_right
+            used_studentnumber_half_split = True
+
+    if (not used_studentnumber_half_split) and (not left_col or not right_col) and len(found) >= 4:
         clustered = _split_columns_by_heading_clusters(found)
         if clustered is not None:
             left_col, right_col = clustered

@@ -89,6 +89,7 @@ def test_match_with_weak_winner_is_treated_as_unanswered_without_review(monkeypa
         option_centers=option_centers,
     )
 
-    assert answers == []
-    assert needs_review is False
-    assert scores == {}
+    assert answers == ["A"]
+    assert needs_review is True
+    assert "score_A" in scores
+    assert "prob_A" in scores

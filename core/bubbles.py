@@ -88,11 +88,8 @@ def extract_row_answers(
     )
 
     needs_review = model_review
-    if section["section_type"] == "TF" and len(filled_labels) != 1:
-        needs_review = True
-
-    if section["section_type"] == "MATCH" and len(filled_labels) != 1:
-        needs_review = True
+    if section["section_type"] in {"TF", "MATCH"} and len(filled_labels) != 1:
+        return [], True, {}
 
     answers = [output_map[label] for label in filled_labels if label in output_map]
     if not answers:

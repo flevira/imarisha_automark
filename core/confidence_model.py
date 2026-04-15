@@ -126,6 +126,18 @@ class BubbleConfidenceModel:
         sorted_probs = sorted(probs.values(), reverse=True)
         second_prob = sorted_probs[1] if len(sorted_probs) > 1 else 0.0
 
+        if allow_multiple_answers and len(positives) > 1:
+            # MC rows may intentionally allow more than one marked option, but
+            # we should only keep options that are genuinely close to the top
+            # confidence. This avoids exporting every option when the model is
+            # over-confident and all probabilities sit above the base threshold.
+            near_top_cutoff = max(threshold, top_prob - self.config.uncertainty_band)
+            positives = [
+                label
+                for label in positives
+                if probs.get(label, 0.0) >= near_top_cutoff
+            ]
+
         ordered_scores = [float(scores[label]) for label in ordered_labels if label in scores]
         if ordered_scores:
             score_max = max(ordered_scores)

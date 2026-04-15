@@ -310,32 +310,14 @@ def detect_section_blocks_scanned(
     margin = max(10, int(w * 0.03))
     blocks: list[dict[str, Any]] = []
 
-    divider_start_y = max(0, min(item[1] for item in found) - 24)
-    if studentnumber_anchor_y is not None:
-        # On the answer sheet layout, the vertical divider usually starts a bit
-        # above/beside STUDENTNUMBER and above the first right-column heading.
-        divider_start_y = max(0, min(divider_start_y, studentnumber_anchor_y - 56))
-
-    split_x = _detect_vertical_column_divider_x(
-        img_bgr=img_bgr,
-        y_start=divider_start_y,
-    )
-    if split_x is None:
-        split_x = mid_x
+    # Use geometric page-width split only (50/50) to keep behavior deterministic.
+    split_x = mid_x
 
     # Use one deterministic split strategy only:
     # headings below STUDENTNUMBER (when present), then split by divider/midpoint.
     left_col = [item for item in found if item[2] <= split_x]
     right_col = [item for item in found if item[2] > split_x]
-    split_source = "divider" if split_x != mid_x else "midpoint"
-
-    # Guardrail for noisy divider detections: if divider split is one-sided,
-    # hard-fallback to midpoint so both columns can still be recovered.
-    if split_source == "divider" and (not left_col or not right_col):
-        split_x = mid_x
-        split_source = "midpoint"
-        left_col = [item for item in found if item[2] <= split_x]
-        right_col = [item for item in found if item[2] > split_x]
+    split_source = "midpoint"
 
     def _build_column_blocks(
         column_items: list[tuple[str, int, int]], x0: int, x1: int

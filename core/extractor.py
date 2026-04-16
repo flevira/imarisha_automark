@@ -211,7 +211,9 @@ def detect_section_blocks_scanned(
         ("OPEN_ENDED", ("OPEN",)),
     ]
 
-    def _find_sections(min_conf: float) -> list[tuple[str, int, int]]:
+    def _find_sections(
+        min_conf: float,
+    ) -> tuple[list[tuple[str, int, int]], list[tuple[str, int, int]]]:
         lines: dict[tuple[int, int, int, int], list[str]] = {}
         first_idx_by_line: dict[tuple[int, int, int, int], int] = {}
 
@@ -235,21 +237,32 @@ def detect_section_blocks_scanned(
             lines.setdefault(key, []).append(token)
             first_idx_by_line.setdefault(key, i)
 
+        heading_candidates: list[tuple[str, int, int]] = []
         found_sections: list[tuple[str, int, int]] = []
         for key, toks in lines.items():
             normalized = re.sub(r"[^A-Z]", "", " ".join(toks).upper())
+            if len(normalized) >= 4 and normalized != "STUDENTNUMBER":
+                idx = first_idx_by_line[key]
+                left = int(data["left"][idx])
+                width = int(data["width"][idx])
+                x_center = left + max(1, width) // 2
+                heading_candidates.append((normalized, int(data["top"][idx]), x_center))
+
             for section_type, patterns in heading_specs:
                 if any(_fuzzy_substring_match(normalized, pat) for pat in patterns):
                     idx = first_idx_by_line[key]
+                    left = int(data["left"][idx])
+                    width = int(data["width"][idx])
+                    x_center = left + max(1, width) // 2
                     found_sections.append(
-                        (section_type, int(data["top"][idx]), int(data["left"][idx]))
+                        (section_type, int(data["top"][idx]), x_center)
                     )
                     break
-        return found_sections
+        return found_sections, heading_candidates
 
-    found = _find_sections(min_conf=20.0)
+    found, heading_candidates = _find_sections(min_conf=20.0)
     if not found:
-        found = _find_sections(min_conf=10.0)
+        found, heading_candidates = _find_sections(min_conf=10.0)
 
     def _find_studentnumber_anchor_y() -> int | None:
         line_tokens: dict[tuple[int, int, int, int], list[tuple[str, int, int]]] = {}
@@ -293,21 +306,32 @@ def detect_section_blocks_scanned(
         filtered = [item for item in found if item[1] >= (studentnumber_anchor_y - 20)]
         if len(filtered) >= 2:
             found = filtered
+    if studentnumber_anchor_y is not None and heading_candidates:
+        filtered_candidates = [
+            item for item in heading_candidates if item[1] >= (studentnumber_anchor_y - 20)
+        ]
+        if filtered_candidates:
+            heading_candidates = filtered_candidates
 
+    h = img_bgr.shape[0]
+    w = img_bgr.shape[1]
+    mid_x = w // 2
+    candidate_left_count = sum(1 for _, _, x in heading_candidates if x <= mid_x)
+    candidate_right_count = sum(1 for _, _, x in heading_candidates if x > mid_x)
+    heading_candidate_names = [name for name, _, _ in sorted(heading_candidates, key=lambda t: t[1])]
     if not found:
         empty_debug = {
-            "raw_headings_detected": 0,
-            "column_left_headings": 0,
-            "column_right_headings": 0,
+            "raw_headings_detected": len(heading_candidates),
+            "column_left_headings": candidate_left_count,
+            "column_right_headings": candidate_right_count,
+            "heading_candidates": heading_candidate_names,
             "left_column_sections": 0,
             "right_column_sections": 0,
         }
         return ([], empty_debug) if return_debug else []
 
-    h = img_bgr.shape[0]
-    w = img_bgr.shape[1]
-    mid_x = w // 2
-    margin = max(10, int(w * 0.03))
+    left_margin = max(10, int(w * 0.03))
+    right_margin = max(4, int(w * 0.012))
     blocks: list[dict[str, Any]] = []
 
     # Use geometric page-width split only (50/50) to keep behavior deterministic.
@@ -351,15 +375,16 @@ def detect_section_blocks_scanned(
                 )
         return col_blocks
 
-    left_blocks = _build_column_blocks(left_col, 0, split_x - margin)
-    right_blocks = _build_column_blocks(right_col, split_x + margin, w)
+    left_blocks = _build_column_blocks(left_col, 0, split_x - left_margin)
+    right_blocks = _build_column_blocks(right_col, split_x + right_margin, w)
     blocks.extend(left_blocks)
     blocks.extend(right_blocks)
     print(f"[extractor][scanned] detected sections: {len(blocks)}")
     debug = {
-        "raw_headings_detected": len(found),
-        "column_left_headings": len(left_col),
-        "column_right_headings": len(right_col),
+        "raw_headings_detected": len(heading_candidates),
+        "column_left_headings": candidate_left_count,
+        "column_right_headings": candidate_right_count,
+        "heading_candidates": heading_candidate_names,
         "left_column_sections": len(left_blocks),
         "right_column_sections": len(right_blocks),
         "column_split_x_px": int(split_x),
@@ -1221,6 +1246,12 @@ def _format_extraction_report(
                 f"     - scanned heading OCR: raw={page_report.get('scan_headings_raw', 0)}, "
                 f"left={page_report.get('scan_headings_left', 0)}, "
                 f"right={page_report.get('scan_headings_right', 0)}",
+                "     - scanned heading candidates: "
+                + (
+                    ", ".join(page_report.get("scan_heading_candidates", []))
+                    if page_report.get("scan_heading_candidates")
+                    else "none"
+                ),
                 f"  3) Rows detected before OMR: {page_report['rows_detected_total']}",
                 f"  4) OMR answers detected: {page_report['answers_detected_total']}",
                 f"  5) Unanswered rows after OMR: {page_report['rows_unanswered_total']}",
@@ -1348,6 +1379,7 @@ def extract_file_with_report(
             "scan_headings_raw": int(scan_section_debug.get("raw_headings_detected", 0)),
             "scan_headings_left": int(scan_section_debug.get("column_left_headings", 0)),
             "scan_headings_right": int(scan_section_debug.get("column_right_headings", 0)),
+            "scan_heading_candidates": list(scan_section_debug.get("heading_candidates", [])),
             "scan_heading_guard_warning": None,
             "section_debug": [],
         }

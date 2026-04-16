@@ -241,8 +241,11 @@ def detect_section_blocks_scanned(
             for section_type, patterns in heading_specs:
                 if any(_fuzzy_substring_match(normalized, pat) for pat in patterns):
                     idx = first_idx_by_line[key]
+                    left = int(data["left"][idx])
+                    width = int(data["width"][idx])
+                    x_center = left + max(1, width) // 2
                     found_sections.append(
-                        (section_type, int(data["top"][idx]), int(data["left"][idx]))
+                        (section_type, int(data["top"][idx]), x_center)
                     )
                     break
         return found_sections
@@ -307,7 +310,8 @@ def detect_section_blocks_scanned(
     h = img_bgr.shape[0]
     w = img_bgr.shape[1]
     mid_x = w // 2
-    margin = max(10, int(w * 0.03))
+    left_margin = max(10, int(w * 0.03))
+    right_margin = max(4, int(w * 0.012))
     blocks: list[dict[str, Any]] = []
 
     # Use geometric page-width split only (50/50) to keep behavior deterministic.
@@ -351,8 +355,8 @@ def detect_section_blocks_scanned(
                 )
         return col_blocks
 
-    left_blocks = _build_column_blocks(left_col, 0, split_x - margin)
-    right_blocks = _build_column_blocks(right_col, split_x + margin, w)
+    left_blocks = _build_column_blocks(left_col, 0, split_x - left_margin)
+    right_blocks = _build_column_blocks(right_col, split_x + right_margin, w)
     blocks.extend(left_blocks)
     blocks.extend(right_blocks)
     print(f"[extractor][scanned] detected sections: {len(blocks)}")

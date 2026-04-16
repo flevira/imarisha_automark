@@ -171,3 +171,4 @@ def test_detect_section_blocks_scanned_reports_unmatched_heading_candidates(
     assert debug["raw_headings_detected"] == 3
     assert debug["column_left_headings"] == 1
     assert debug["column_right_headings"] == 2
+    assert debug["heading_candidates"] == ["TRUEFAISE", "MATCHINC", "MUITIPLE"]

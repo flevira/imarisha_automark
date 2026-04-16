@@ -63,6 +63,47 @@ def test_pick_qid_for_row_from_candidates_returns_nearest_match() -> None:
     assert qid == "81555"
 
 
+def test_extract_scanned_qid_candidates_allows_non_5_6_digit_tokens(monkeypatch) -> None:
+    roi = np.full((180, 300, 3), 255, dtype=np.uint8)
+
+    def _fake_ocr_data(_img, *, psm: int):
+        if psm == 6:
+            return {
+                "text": ["12", "9999999", "A"],
+                "conf": ["90", "92", "95"],
+                "left": [30, 34, 120],
+                "top": [40, 90, 120],
+                "width": [20, 50, 10],
+                "height": [14, 14, 10],
+                "block_num": [1, 1, 1],
+                "par_num": [1, 1, 1],
+                "line_num": [1, 1, 1],
+                "page_num": [1, 1, 1],
+            }
+        return {
+            "text": [],
+            "conf": [],
+            "left": [],
+            "top": [],
+            "width": [],
+            "height": [],
+            "block_num": [],
+            "par_num": [],
+            "line_num": [],
+            "page_num": [],
+        }
+
+    monkeypatch.setattr(extractor_module, "_ocr_data", _fake_ocr_data)
+    out = extractor_module._extract_scanned_qid_candidates(
+        section_roi_bgr=roi,
+        section_type="MC",
+        x_offset=0,
+        y_offset=0,
+    )
+
+    assert [c["question_id"] for c in out] == ["12", "9999999"]
+
+
 def test_extract_scanned_item_candidates_reads_item_column_tokens(monkeypatch) -> None:
     roi = np.full((220, 400, 3), 255, dtype=np.uint8)
 
@@ -118,3 +159,43 @@ def test_pick_item_number_for_row_from_candidates_returns_nearest_match() -> Non
     )
 
     assert item_number == 2
+
+
+def test_extract_scanned_item_candidates_allows_any_numeric_item_token(monkeypatch) -> None:
+    roi = np.full((200, 400, 3), 255, dtype=np.uint8)
+
+    def _fake_ocr_data(_img, *, psm: int):
+        if psm == 6:
+            return {
+                "text": ["7", "12", "X"],
+                "conf": ["90", "91", "88"],
+                "left": [180, 186, 20],
+                "top": [30, 80, 120],
+                "width": [14, 20, 8],
+                "height": [14, 14, 10],
+                "block_num": [1, 1, 1],
+                "par_num": [1, 1, 1],
+                "line_num": [1, 1, 1],
+                "page_num": [1, 1, 1],
+            }
+        return {
+            "text": [],
+            "conf": [],
+            "left": [],
+            "top": [],
+            "width": [],
+            "height": [],
+            "block_num": [],
+            "par_num": [],
+            "line_num": [],
+            "page_num": [],
+        }
+
+    monkeypatch.setattr(extractor_module, "_ocr_data", _fake_ocr_data)
+    out = extractor_module._extract_scanned_item_candidates(
+        section_roi_bgr=roi,
+        x_offset=0,
+        y_offset=0,
+    )
+
+    assert [c["item_number"] for c in out] == [7, 12]

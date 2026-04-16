@@ -116,3 +116,84 @@ def test_detect_section_blocks_scanned_uses_geometric_page_split(
     assert debug["column_split_source"] == "midpoint"
     assert debug["column_left_headings"] == 1
     assert debug["column_right_headings"] == 2
+
+
+def test_detect_section_blocks_scanned_splits_columns_using_heading_center_x(
+    monkeypatch,
+) -> None:
+    img = np.full((1200, 1000, 3), 255, dtype=np.uint8)
+
+    def _fake_ocr_data(*_args, **_kwargs):
+        return {
+            "text": ["MULTIPLE", "TRUEFALSE", "MATCHING"],
+            "conf": ["95", "95", "95"],
+            # TRUEFALSE starts slightly left of the page midpoint, but most of the
+            # heading sits on the right column.
+            "left": [70, 470, 560],
+            "top": [620, 220, 420],
+            "width": [120, 110, 120],
+            "height": [24, 24, 24],
+            "block_num": [1, 2, 3],
+            "par_num": [1, 1, 1],
+            "line_num": [1, 1, 1],
+            "page_num": [1, 1, 1],
+        }
+
+    monkeypatch.setattr(extractor_module, "_ocr_data", _fake_ocr_data)
+    _blocks, debug = extractor_module.detect_section_blocks_scanned(img, return_debug=True)
+
+    assert debug["column_left_headings"] == 1
+    assert debug["column_right_headings"] == 2
+
+
+def test_detect_section_blocks_scanned_reports_unmatched_heading_candidates(
+    monkeypatch,
+) -> None:
+    img = np.full((1200, 1000, 3), 255, dtype=np.uint8)
+
+    def _fake_ocr_data(*_args, **_kwargs):
+        return {
+            "text": ["STUDENTNUMBER", "MUITIPLE", "TRUEFAISE", "MATCHINC"],
+            "conf": ["95", "95", "95", "95"],
+            "left": [55, 80, 560, 580],
+            "top": [190, 620, 240, 440],
+            "width": [220, 130, 130, 120],
+            "height": [30, 24, 24, 24],
+            "block_num": [1, 2, 3, 4],
+            "par_num": [1, 1, 1, 1],
+            "line_num": [1, 1, 1, 1],
+            "page_num": [1, 1, 1, 1],
+        }
+
+    monkeypatch.setattr(extractor_module, "_ocr_data", _fake_ocr_data)
+    _blocks, debug = extractor_module.detect_section_blocks_scanned(img, return_debug=True)
+
+    assert debug["raw_headings_detected"] == 3
+    assert debug["column_left_headings"] == 1
+    assert debug["column_right_headings"] == 2
+    assert debug["heading_candidates"] == ["TRUEFAISE", "MATCHINC", "MUITIPLE"]
+
+
+def test_detect_section_blocks_scanned_filters_o_heavy_noise_candidates(
+    monkeypatch,
+) -> None:
+    img = np.full((1200, 1000, 3), 255, dtype=np.uint8)
+
+    def _fake_ocr_data(*_args, **_kwargs):
+        return {
+            "text": ["TRUEFALSE", "OOOOOO", "OO", "OOOO", "MATCHING", "OOCO", "MULTIPLE"],
+            "conf": ["95", "95", "95", "95", "95", "95", "95"],
+            "left": [560, 560, 560, 560, 560, 560, 80],
+            "top": [240, 240, 240, 240, 440, 440, 620],
+            "width": [130, 130, 130, 130, 120, 120, 120],
+            "height": [24, 24, 24, 24, 24, 24, 24],
+            "block_num": [1, 1, 1, 1, 2, 2, 3],
+            "par_num": [1, 1, 1, 1, 1, 1, 1],
+            "line_num": [1, 1, 1, 1, 1, 1, 1],
+            "page_num": [1, 1, 1, 1, 1, 1, 1],
+        }
+
+    monkeypatch.setattr(extractor_module, "_ocr_data", _fake_ocr_data)
+    _blocks, debug = extractor_module.detect_section_blocks_scanned(img, return_debug=True)
+
+    assert debug["heading_candidates"] == ["TRUEFALSE", "MATCHING", "MULTIPLE"]

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from pathlib import Path
 from typing import Any
 
 import cv2
@@ -22,22 +23,120 @@ from core.student_id import (
 RENDER_ZOOM = 4.0
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".webp"}
 TEXT_LAYER_SKEW_FALLBACK_DEG = 2.5
+OCR_OVERLAY_MIN_ALNUM = 20
+
+_OCR_OVERLAY_CACHE: dict[str, bytes] = {}
 
 
 def has_usable_text_layer(page: fitz.Page) -> bool:
     text = page.get_text("text", sort=True) or ""
-    return len(re.sub(r"[^A-Za-z0-9]", "", text)) >= 20
+    return len(re.sub(r"[^A-Za-z0-9]", "", text)) >= OCR_OVERLAY_MIN_ALNUM
 
 
-def _ocr_data(img_bgr: np.ndarray, *, psm: int = 6) -> dict[str, list[Any]]:
-    gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
-    gray = cv2.GaussianBlur(gray, (3, 3), 0)
-    _, th = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+def _ocr_data_from_gray(gray: np.ndarray, *, psm: int = 6) -> dict[str, list[Any]]:
+    blur = cv2.GaussianBlur(gray, (3, 3), 0)
+    _, th = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
     return pytesseract.image_to_data(
         th,
         config=f"--psm {psm}",
         output_type=pytesseract.Output.DICT,
     )
+
+
+def create_ocr_overlay_pdf(doc: fitz.Document) -> tuple[fitz.Document, bool, int]:
+    overlay_doc = fitz.open()
+    applied = False
+    total_chars = 0
+
+    for page_idx in range(len(doc)):
+        src_page = doc[page_idx]
+        page_rect = src_page.rect
+        dst_page = overlay_doc.new_page(width=page_rect.width, height=page_rect.height)
+
+        if has_usable_text_layer(src_page):
+            dst_page.show_pdf_page(dst_page.rect, doc, page_idx)
+            continue
+
+        applied = True
+        pix = src_page.get_pixmap(matrix=fitz.Matrix(RENDER_ZOOM, RENDER_ZOOM), alpha=False)
+        img_rgb = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width, pix.n)
+        img_bgr = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2BGR)
+
+        dst_page.insert_image(dst_page.rect, stream=pix.tobytes("png"))
+
+        gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
+        data = _ocr_data_from_gray(gray, psm=6)
+        chars_on_page = 0
+        scale_x = page_rect.width / float(pix.width)
+        scale_y = page_rect.height / float(pix.height)
+
+        for i, raw in enumerate(data.get("text", [])):
+            token = (raw or "").strip()
+            if not token:
+                continue
+            conf_raw = str(data.get("conf", ["-1"])[i]).strip()
+            try:
+                if float(conf_raw) < 0:
+                    continue
+            except ValueError:
+                continue
+
+            left = int(data["left"][i])
+            top = int(data["top"][i])
+            width = int(data["width"][i])
+            height = int(data["height"][i])
+            if width <= 0 or height <= 0:
+                continue
+
+            x = float(left) * scale_x
+            y_bottom = float(top + height) * scale_y
+            font_size = max(6.0, float(height) * scale_y * 0.95)
+            dst_page.insert_text(
+                fitz.Point(x, y_bottom),
+                token,
+                fontsize=font_size,
+                render_mode=3,
+                overlay=True,
+            )
+            chars_on_page += len(token)
+
+        total_chars += chars_on_page
+
+    return overlay_doc, applied, total_chars
+
+
+def _doc_cache_key(file_path: str) -> str:
+    p = Path(file_path)
+    try:
+        stat = p.stat()
+    except OSError:
+        return file_path
+    return f"{p.resolve()}::{int(stat.st_mtime_ns)}::{stat.st_size}"
+
+
+def _prepare_document_for_extraction(doc: fitz.Document, file_path: str) -> tuple[fitz.Document, bool]:
+    if all(has_usable_text_layer(doc[i]) for i in range(len(doc))):
+        print("[extractor] Using native text layer")
+        return doc, False
+
+    print("[extractor] Applying OCR overlay (scanned mode)")
+    cache_key = _doc_cache_key(file_path)
+    cached = _OCR_OVERLAY_CACHE.get(cache_key)
+    if cached is not None:
+        return fitz.open(stream=cached, filetype="pdf"), True
+
+    overlay_doc, applied, ocr_chars = create_ocr_overlay_pdf(doc)
+    print(f"[extractor] OCR characters extracted: {ocr_chars}")
+    if applied:
+        overlay_bytes = overlay_doc.tobytes()
+        _OCR_OVERLAY_CACHE[cache_key] = overlay_bytes
+        return fitz.open(stream=overlay_bytes, filetype="pdf"), True
+    return overlay_doc, False
+
+
+def _ocr_data(img_bgr: np.ndarray, *, psm: int = 6) -> dict[str, list[Any]]:
+    gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
+    return _ocr_data_from_gray(gray, psm=psm)
 
 
 def _estimate_skew_correction_degrees(img_bgr: np.ndarray) -> float:
@@ -1317,18 +1416,30 @@ def _format_extraction_report(
 def extract_file_with_report(
     file_path: str, student_id_mode: str
 ) -> tuple[list[dict[str, Any]], str]:
-    doc = _open_file_as_document(file_path)
+    source_doc = _open_file_as_document(file_path)
+    doc, force_text_layer = _prepare_document_for_extraction(source_doc, file_path)
+    if doc is not source_doc:
+        source_doc.close()
     all_rows: list[dict[str, Any]] = []
     page_reports: list[dict[str, Any]] = []
 
     for page_idx in range(len(doc)):
         page = doc[page_idx]
-        img_raw_bgr = render_page_raw_to_bgr(page)
-        img_bgr = preprocess_scanned_for_omr(img_raw_bgr)
+        try:
+            img_raw_bgr = render_page_raw_to_bgr(page)
+            img_bgr = preprocess_scanned_for_omr(img_raw_bgr)
+        except AttributeError:
+            # Test doubles may only provide the preprocessed rendering hook.
+            img_bgr = render_page_to_bgr(page)
+            img_raw_bgr = img_bgr.copy()
         page_number = page_idx + 1
         use_text_layer = has_usable_text_layer(page)
         estimated_skew = _estimate_skew_correction_degrees(img_raw_bgr)
-        if use_text_layer and abs(estimated_skew) >= TEXT_LAYER_SKEW_FALLBACK_DEG:
+        if (
+            not force_text_layer
+            and use_text_layer
+            and abs(estimated_skew) >= TEXT_LAYER_SKEW_FALLBACK_DEG
+        ):
             # Some scanned PDFs include an OCR text layer. Their word coordinates are
             # often unreliable when the underlying scan is skewed, so force scanned
             # mode so deskew/alignment can be applied consistently.

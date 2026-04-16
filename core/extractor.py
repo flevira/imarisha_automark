@@ -167,6 +167,26 @@ def detect_section_blocks_scanned(
 ) -> list[dict[str, Any]] | tuple[list[dict[str, Any]], dict[str, Any]]:
     data = _ocr_data(img_bgr, psm=6)
 
+    def _normalize_heading_token(token: str) -> str:
+        cleaned = re.sub(r"[^A-Z]", "", token.upper())
+        if not cleaned:
+            return ""
+        # OCR around bubble rows often pads tokens with repeated O/0 at edges.
+        cleaned = re.sub(r"^[O0]{2,}", "", cleaned)
+        cleaned = re.sub(r"[O0]{2,}$", "", cleaned)
+        return cleaned
+
+    def _is_heading_token_noise(token: str) -> bool:
+        if len(token) < 4:
+            return True
+        if token == "STUDENTNUMBER":
+            return True
+        distinct = len(set(token))
+        if distinct <= 1:
+            return True
+        o_ratio = sum(1 for ch in token if ch == "O") / float(len(token))
+        return o_ratio > 0.6
+
     def _levenshtein(a: str, b: str, max_dist: int = 2) -> int:
         if abs(len(a) - len(b)) > max_dist:
             return max_dist + 1
@@ -241,12 +261,19 @@ def detect_section_blocks_scanned(
         found_sections: list[tuple[str, int, int]] = []
         for key, toks in lines.items():
             normalized = re.sub(r"[^A-Z]", "", " ".join(toks).upper())
-            if len(normalized) >= 4 and normalized != "STUDENTNUMBER":
+            candidate_tokens = [
+                _normalize_heading_token(tok)
+                for tok in toks
+                if _normalize_heading_token(tok)
+            ]
+            candidate_tokens = [tok for tok in candidate_tokens if not _is_heading_token_noise(tok)]
+            candidate_name = "".join(candidate_tokens)
+            if len(candidate_name) >= 4:
                 idx = first_idx_by_line[key]
                 left = int(data["left"][idx])
                 width = int(data["width"][idx])
                 x_center = left + max(1, width) // 2
-                heading_candidates.append((normalized, int(data["top"][idx]), x_center))
+                heading_candidates.append((candidate_name, int(data["top"][idx]), x_center))
 
             for section_type, patterns in heading_specs:
                 if any(_fuzzy_substring_match(normalized, pat) for pat in patterns):

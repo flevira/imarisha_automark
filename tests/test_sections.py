@@ -172,3 +172,28 @@ def test_detect_section_blocks_scanned_reports_unmatched_heading_candidates(
     assert debug["column_left_headings"] == 1
     assert debug["column_right_headings"] == 2
     assert debug["heading_candidates"] == ["TRUEFAISE", "MATCHINC", "MUITIPLE"]
+
+
+def test_detect_section_blocks_scanned_filters_o_heavy_noise_candidates(
+    monkeypatch,
+) -> None:
+    img = np.full((1200, 1000, 3), 255, dtype=np.uint8)
+
+    def _fake_ocr_data(*_args, **_kwargs):
+        return {
+            "text": ["TRUEFALSE", "OOOOOO", "OO", "OOOO", "MATCHING", "OOCO", "MULTIPLE"],
+            "conf": ["95", "95", "95", "95", "95", "95", "95"],
+            "left": [560, 560, 560, 560, 560, 560, 80],
+            "top": [240, 240, 240, 240, 440, 440, 620],
+            "width": [130, 130, 130, 130, 120, 120, 120],
+            "height": [24, 24, 24, 24, 24, 24, 24],
+            "block_num": [1, 1, 1, 1, 2, 2, 3],
+            "par_num": [1, 1, 1, 1, 1, 1, 1],
+            "line_num": [1, 1, 1, 1, 1, 1, 1],
+            "page_num": [1, 1, 1, 1, 1, 1, 1],
+        }
+
+    monkeypatch.setattr(extractor_module, "_ocr_data", _fake_ocr_data)
+    _blocks, debug = extractor_module.detect_section_blocks_scanned(img, return_debug=True)
+
+    assert debug["heading_candidates"] == ["TRUEFALSE", "MATCHING", "MULTIPLE"]

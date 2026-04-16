@@ -723,13 +723,15 @@ def _extract_scanned_qid_candidates(
         data = _ocr_data(section_roi_bgr, psm=psm)
         for i, txt in enumerate(data["text"]):
             token = re.sub(r"[^0-9]", "", (txt or ""))
-            if not re.fullmatch(r"\d{5,6}", token):
+            # Relax scanned debug capture: keep any numeric token so row matching can
+            # expose where OCR is reading IDs, even when digit count is imperfect.
+            if not token:
                 continue
             try:
                 conf = float(data["conf"][i])
             except Exception:
                 conf = -1.0
-            if conf < 25:
+            if conf < 15:
                 continue
 
             left = int(data["left"][i])
@@ -805,13 +807,13 @@ def _extract_scanned_item_candidates(
         data = _ocr_data(section_roi_bgr, psm=psm)
         for i, txt in enumerate(data["text"]):
             token = re.sub(r"[^0-9]", "", (txt or ""))
-            if token not in {"1", "2", "3", "4"}:
+            if not token:
                 continue
             try:
                 conf = float(data["conf"][i])
             except Exception:
                 conf = -1.0
-            if conf < 18.0:
+            if conf < 12.0:
                 continue
 
             left = int(data["left"][i])

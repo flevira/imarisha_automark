@@ -24,6 +24,11 @@ RENDER_ZOOM = 4.0
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".webp"}
 TEXT_LAYER_SKEW_FALLBACK_DEG = 2.5
 OCR_OVERLAY_MIN_ALNUM = 20
+OCR_OVERLAY_PSM_MODES = (6, 11)
+OCR_OVERLAY_IOU_THRESHOLD = 0.3
+OCR_OVERLAY_CENTER_DISTANCE_RATIO = 0.65
+OCR_OVERLAY_MIN_CONF = 40.0
+OCR_OVERLAY_MIN_CONF_SINGLE_CHAR = 65.0
 
 _OCR_OVERLAY_CACHE: dict[str, bytes] = {}
 
@@ -33,14 +38,133 @@ def has_usable_text_layer(page: fitz.Page) -> bool:
     return len(re.sub(r"[^A-Za-z0-9]", "", text)) >= OCR_OVERLAY_MIN_ALNUM
 
 
+def _bbox_iou(b1: tuple[int, int, int, int], b2: tuple[int, int, int, int]) -> float:
+    l1, t1, w1, h1 = b1
+    l2, t2, w2, h2 = b2
+    r1, btm1 = l1 + w1, t1 + h1
+    r2, btm2 = l2 + w2, t2 + h2
+
+    inter_w = max(0, min(r1, r2) - max(l1, l2))
+    inter_h = max(0, min(btm1, btm2) - max(t1, t2))
+    inter = inter_w * inter_h
+    if inter <= 0:
+        return 0.0
+
+    area1 = w1 * h1
+    area2 = w2 * h2
+    union = area1 + area2 - inter
+    if union <= 0:
+        return 0.0
+    return inter / float(union)
+
+
+def _center_distance_ratio(b1: tuple[int, int, int, int], b2: tuple[int, int, int, int]) -> float:
+    l1, t1, w1, h1 = b1
+    l2, t2, w2, h2 = b2
+    c1x, c1y = l1 + (w1 / 2.0), t1 + (h1 / 2.0)
+    c2x, c2y = l2 + (w2 / 2.0), t2 + (h2 / 2.0)
+    distance = float(np.hypot(c1x - c2x, c1y - c2y))
+    normalizer = max(1.0, min(w1, h1, w2, h2))
+    return distance / normalizer
+
+
+def _aggregate_ocr_token_candidates(
+    candidates: list[dict[str, Any]],
+    *,
+    iou_threshold: float = OCR_OVERLAY_IOU_THRESHOLD,
+    center_distance_ratio: float = OCR_OVERLAY_CENTER_DISTANCE_RATIO,
+) -> list[dict[str, Any]]:
+    if not candidates:
+        return []
+
+    sorted_candidates = sorted(candidates, key=lambda item: float(item["conf"]), reverse=True)
+    groups: list[list[dict[str, Any]]] = []
+
+    for candidate in sorted_candidates:
+        bbox = candidate["bbox"]
+        matched_group: list[dict[str, Any]] | None = None
+        for group in groups:
+            group_best = group[0]
+            group_bbox = group_best["bbox"]
+            if _bbox_iou(bbox, group_bbox) >= iou_threshold:
+                matched_group = group
+                break
+            if _center_distance_ratio(bbox, group_bbox) <= center_distance_ratio:
+                matched_group = group
+                break
+        if matched_group is None:
+            groups.append([candidate])
+            continue
+        matched_group.append(candidate)
+
+    return [group[0] for group in groups]
+
+
 def _ocr_data_from_gray(gray: np.ndarray, *, psm: int = 6) -> dict[str, list[Any]]:
     blur = cv2.GaussianBlur(gray, (3, 3), 0)
-    _, th = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    return pytesseract.image_to_data(
-        th,
-        config=f"--psm {psm}",
-        output_type=pytesseract.Output.DICT,
+    _, otsu_binary = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    _, otsu_inverted = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+    adaptive = cv2.adaptiveThreshold(
+        blur,
+        255,
+        cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+        cv2.THRESH_BINARY,
+        31,
+        12,
     )
+    variants = {
+        "gray": gray,
+        "otsu_binary": otsu_binary,
+        "otsu_inverted": otsu_inverted,
+        "adaptive": adaptive,
+    }
+
+    psm_modes = tuple(dict.fromkeys((psm, *OCR_OVERLAY_PSM_MODES)))
+    candidates: list[dict[str, Any]] = []
+    for variant_name, img in variants.items():
+        for mode in psm_modes:
+            data = pytesseract.image_to_data(
+                img,
+                config=f"--psm {mode}",
+                output_type=pytesseract.Output.DICT,
+            )
+            for i, raw in enumerate(data.get("text", [])):
+                token = (raw or "").strip()
+                if not token:
+                    continue
+                conf_raw = str(data.get("conf", ["-1"])[i]).strip()
+                try:
+                    conf = float(conf_raw)
+                except ValueError:
+                    continue
+                if conf < 0:
+                    continue
+
+                left = int(data["left"][i])
+                top = int(data["top"][i])
+                width = int(data["width"][i])
+                height = int(data["height"][i])
+                if width <= 0 or height <= 0:
+                    continue
+                candidates.append(
+                    {
+                        "text": token,
+                        "conf": conf,
+                        "bbox": (left, top, width, height),
+                        "variant": variant_name,
+                        "psm": mode,
+                    }
+                )
+
+    best_tokens = _aggregate_ocr_token_candidates(candidates)
+    return {
+        "text": [item["text"] for item in best_tokens],
+        "conf": [item["conf"] for item in best_tokens],
+        "left": [item["bbox"][0] for item in best_tokens],
+        "top": [item["bbox"][1] for item in best_tokens],
+        "width": [item["bbox"][2] for item in best_tokens],
+        "height": [item["bbox"][3] for item in best_tokens],
+    }
 
 
 def create_ocr_overlay_pdf(doc: fitz.Document) -> tuple[fitz.Document, bool, int]:
@@ -67,6 +191,8 @@ def create_ocr_overlay_pdf(doc: fitz.Document) -> tuple[fitz.Document, bool, int
         gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
         data = _ocr_data_from_gray(gray, psm=6)
         chars_on_page = 0
+        inserted_tokens = 0
+        inserted_conf_total = 0.0
         scale_x = page_rect.width / float(pix.width)
         scale_y = page_rect.height / float(pix.height)
 
@@ -74,11 +200,13 @@ def create_ocr_overlay_pdf(doc: fitz.Document) -> tuple[fitz.Document, bool, int
             token = (raw or "").strip()
             if not token:
                 continue
-            conf_raw = str(data.get("conf", ["-1"])[i]).strip()
+            conf_raw = data.get("conf", [-1])[i]
             try:
-                if float(conf_raw) < 0:
-                    continue
-            except ValueError:
+                conf = float(conf_raw)
+            except (TypeError, ValueError):
+                continue
+            min_conf = OCR_OVERLAY_MIN_CONF_SINGLE_CHAR if len(token) <= 1 else OCR_OVERLAY_MIN_CONF
+            if conf < min_conf:
                 continue
 
             left = int(data["left"][i])
@@ -99,8 +227,15 @@ def create_ocr_overlay_pdf(doc: fitz.Document) -> tuple[fitz.Document, bool, int
                 overlay=True,
             )
             chars_on_page += len(token)
+            inserted_tokens += 1
+            inserted_conf_total += conf
 
         total_chars += chars_on_page
+        mean_conf = inserted_conf_total / inserted_tokens if inserted_tokens else 0.0
+        print(
+            f"[extractor] OCR overlay page {page_idx + 1}: tokens={inserted_tokens}, "
+            f"chars={chars_on_page}, avg_conf={mean_conf:.1f}"
+        )
 
     return overlay_doc, applied, total_chars
 

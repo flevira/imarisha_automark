@@ -21,12 +21,12 @@ This document captures hard-coded numeric thresholds and setup parameters used i
 
 | Use case | Current setup | Typical industry range | Assessment |
 |---|---|---|---|
-| Generic fallback gate | Tesseract minimum confidence = 55.0 | 50–70 | In-range; balanced precision/recall. |
+| Generic primary OCR gate | Legacy param `min_tesseract_confidence` = 55.0 (applies to Paddle+Tesseract pool) | 50–70 | In-range; balanced precision/recall. |
 | Question ID (5–6 digits) | min confidence = 58.0, token length 5–6 | 55–75, fixed length preferred | In-range; reasonable for numeric IDs. |
 | Matching item number | min confidence = 50.0, token length = 1, pattern `[1-4]` | 45–65 for single-char fields | In-range; recall-friendly for tiny symbols. |
 | Handwritten student ID | min confidence = 45.0, low-conf flag at `<55` | 35–60 (handwritten OCR), review near 50–70 | In-range; appropriately permissive for handwriting. |
 | Multi-variant consistency boost | +6 per repeated hit, capped at +18 | +3 to +20 style bonus patterns | In-range; avoids over-amplification. |
-| Non-Tesseract bias | +4 for Paddle/DocTR in final ranking | 0 to +8 fusion bias | In-range; mild diversification bias. |
+| Engine bias in final ranking | Tesseract +6 (or +10 for numeric), EasyOCR +2, Paddle +0 | 0 to +12 fusion bias | In-range; calibrated to avoid under-ranking numeric Tesseract hits. |
 
 ## 3) Page/scan preprocessing and geometry thresholds
 

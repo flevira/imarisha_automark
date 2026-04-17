@@ -438,8 +438,11 @@ def extract_student_id_bubble(img_bgr: np.ndarray) -> tuple[str | None, bool]:
     candidates = _detect_bubble_candidates(gray)
     columns: list[float] = []
     rows: list[float] = []
+    heading_found = False
     if len(candidates) >= 12:
-        columns, rows, _ = _resolve_grid_from_anchors(gray, candidates)
+        columns, rows, heading_found = _resolve_grid_from_anchors(gray, candidates)
+        if not heading_found:
+            columns, rows = [], []
 
     if len(columns) < 5 or len(rows) < 10:
         columns, rows, heading_found = _resolve_grid_from_ocr_labels(gray)

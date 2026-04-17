@@ -30,8 +30,25 @@ def _build_bubble_grid_image(student_id: str) -> np.ndarray:
     return img
 
 
-def test_extract_student_id_bubble_reads_filled_rows() -> None:
+def _mock_studentnumber_tokens_for_roi(img: np.ndarray) -> list[dict[str, float | str]]:
+    roi_w = int((0.48 - 0.02) * img.shape[1])
+    roi_h = int((0.44 - 0.14) * img.shape[0])
+    cols = np.linspace(50, roi_w - 50, 5).astype(int)
+    rows = np.linspace(30, roi_h - 30, 10).astype(int)
+    tokens: list[dict[str, float | str]] = [
+        {"norm": "STUDENTNUMBER", "cx": 150.0, "cy": 10.0},
+        {"norm": "#", "cx": 10.0, "cy": 35.0},
+    ]
+    for idx, cx in enumerate(cols, start=1):
+        tokens.append({"norm": str(idx), "cx": float(cx), "cy": 35.0})
+    for idx, cy in enumerate(rows):
+        tokens.append({"norm": str(idx), "cx": 10.0, "cy": float(cy)})
+    return tokens
+
+
+def test_extract_student_id_bubble_reads_filled_rows(monkeypatch) -> None:
     img = _build_bubble_grid_image("00530")
+    monkeypatch.setattr(student_id_module, "_ocr_tokens", lambda _gray: _mock_studentnumber_tokens_for_roi(img))
     detected, low_conf = extract_student_id_bubble(img)
     assert detected == "00530"
     assert low_conf is False
@@ -39,8 +56,9 @@ def test_extract_student_id_bubble_reads_filled_rows() -> None:
 
 
 
-def test_extract_student_id_bubble_uses_zero_for_unfilled_column() -> None:
+def test_extract_student_id_bubble_uses_zero_for_unfilled_column(monkeypatch) -> None:
     img = _build_bubble_grid_image("94567")
+    monkeypatch.setattr(student_id_module, "_ocr_tokens", lambda _gray: _mock_studentnumber_tokens_for_roi(img))
 
     x0 = int(0.02 * img.shape[1])
     y0 = int(0.14 * img.shape[0])

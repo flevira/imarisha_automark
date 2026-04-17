@@ -127,3 +127,53 @@ def test_extract_file_retries_bubble_id_with_raw_image_when_preprocessed_misses(
     assert len(seen_means) == 2
     assert seen_means[0] < 10.0
     assert seen_means[1] > 200.0
+
+
+def test_extract_file_uses_aligned_scan_for_bubble_id_even_in_text_layer_mode(monkeypatch) -> None:
+    monkeypatch.setattr(extractor_module, "_open_file_as_document", lambda _path: _DummyDoc())
+    rendered = np.full((1200, 900, 3), 120, dtype=np.uint8)
+    aligned = np.full((1200, 900, 3), 210, dtype=np.uint8)
+    preprocessed = np.full((1200, 900, 3), 30, dtype=np.uint8)
+
+    monkeypatch.setattr(extractor_module, "render_page_raw_to_bgr", lambda _page: rendered.copy())
+    monkeypatch.setattr(extractor_module, "has_usable_text_layer", lambda _page: True)
+    monkeypatch.setattr(extractor_module, "_estimate_skew_correction_degrees", lambda _img: 0.0)
+    monkeypatch.setattr(extractor_module, "normalize_scanned_page_rotation", lambda _img: _img.copy())
+    monkeypatch.setattr(extractor_module, "align_scanned_page_to_template", lambda _img: aligned.copy())
+    monkeypatch.setattr(extractor_module, "preprocess_scanned_for_omr", lambda _img: preprocessed.copy())
+    monkeypatch.setattr(extractor_module, "decode_qr_robust", lambda _img: None)
+
+    seen_means: list[float] = []
+
+    def _bubble_stub(img: np.ndarray) -> tuple[str | None, bool]:
+        seen_means.append(float(img.mean()))
+        return ("43210", False) if float(img.mean()) < 50.0 else (None, True)
+
+    monkeypatch.setattr(extractor_module, "extract_student_id_bubble", _bubble_stub)
+    monkeypatch.setattr(extractor_module, "extract_student_id_handwritten_ocr", lambda _img: (None, True))
+    monkeypatch.setattr(
+        extractor_module,
+        "detect_section_blocks",
+        lambda _page: [{"section_type": "MC", "y0": 100.0, "y1": 500.0, "x0": 0.0, "x1": 450.0}],
+    )
+    monkeypatch.setattr(extractor_module, "find_option_centers", lambda *_args, **_kwargs: {"A": 100.0})
+    monkeypatch.setattr(
+        extractor_module,
+        "extract_rows_for_section",
+        lambda *_args, **_kwargs: [
+            {
+                "section_type": "MC",
+                "question_id": "81593",
+                "item_number": None,
+                "y_center": 180.0,
+                "row_bbox": (10.0, 170.0, 300.0, 190.0),
+            }
+        ],
+    )
+    monkeypatch.setattr(extractor_module, "extract_row_answers", lambda **_kwargs: (["A"], False, {"score_A": 90.0}))
+
+    rows = extractor_module.extract_file("dummy.pdf", student_id_mode="bubble")
+    assert len(rows) == 1
+    assert rows[0]["student_id_bubble"] == "43210"
+    assert rows[0]["student_id_source"] == "text_bubble"
+    assert seen_means == [30.0]

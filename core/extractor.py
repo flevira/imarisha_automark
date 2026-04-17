@@ -1631,12 +1631,14 @@ def extract_file_with_report(
     for page_idx in range(len(doc)):
         page = doc[page_idx]
         try:
-            img_raw_bgr = render_page_raw_to_bgr(page)
+            rendered_raw_bgr = render_page_raw_to_bgr(page)
+            img_raw_bgr = rendered_raw_bgr.copy()
             img_bgr = preprocess_scanned_for_omr(img_raw_bgr)
         except AttributeError:
             # Test doubles may only provide the preprocessed rendering hook.
             img_bgr = render_page_to_bgr(page)
             img_raw_bgr = img_bgr.copy()
+            rendered_raw_bgr = img_raw_bgr.copy()
         page_number = page_idx + 1
         use_text_layer = has_usable_text_layer(page)
         estimated_skew = _estimate_skew_correction_degrees(img_raw_bgr)
@@ -1676,9 +1678,19 @@ def extract_file_with_report(
         elif qr_type == "TEST":
             test_id = qr_parsed.get("testid") or qr_parsed.get("assessmentid")
 
-        bubble_id, _ = extract_student_id_bubble(img_bgr)
+        # Student-ID bubbles are image-based marks. Even when answer extraction uses
+        # text-layer mode, use a normalized/aligned scan view for ID detection.
+        if use_text_layer:
+            id_raw_bgr = normalize_scanned_page_rotation(rendered_raw_bgr)
+            id_raw_bgr = align_scanned_page_to_template(id_raw_bgr)
+            id_bgr = preprocess_scanned_for_omr(id_raw_bgr)
+        else:
+            id_raw_bgr = img_raw_bgr
+            id_bgr = img_bgr
+
+        bubble_id, _ = extract_student_id_bubble(id_bgr)
         if bubble_id is None:
-            bubble_id, _ = extract_student_id_bubble(img_raw_bgr)
+            bubble_id, _ = extract_student_id_bubble(id_raw_bgr)
         handwritten_id, _ = extract_student_id_handwritten_ocr(img_raw_bgr)
 
         id_info = resolve_student_id(

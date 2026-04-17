@@ -55,9 +55,17 @@ def _find_studentnumber_bracket_bounds(roi_gray: np.ndarray) -> tuple[int, int, 
         return None
 
     heading = next((t for t in tokens if "STUDENTNUMBER" in str(t["norm"])), None)
+    if heading is None:
+        return None
 
-    # Best-case: OCR returns the full bracket token in one piece.
+    h_y = int(heading["y"])
+    h_h = int(heading["h"])
+    min_row_y = h_y + int(0.5 * h_h)
+
+    # Best-case: OCR returns the full bracket token in one piece under STUDENTNUMBER.
     for tok in tokens:
+        if int(tok["y"]) < min_row_y:
+            continue
         parsed = _parse_bracket_token(str(tok["text"]))
         if parsed is None:
             continue
@@ -70,11 +78,8 @@ def _find_studentnumber_bracket_bounds(roi_gray: np.ndarray) -> tuple[int, int, 
     # Next: find separate [ and ] tokens on a row under STUDENTNUMBER.
     lefts = [t for t in tokens if "[" in str(t["text"])]
     rights = [t for t in tokens if "]" in str(t["text"])]
-    if heading:
-        h_y = int(heading["y"])
-        h_h = int(heading["h"])
-        lefts = [t for t in lefts if int(t["y"]) >= h_y + int(0.5 * h_h)]
-        rights = [t for t in rights if int(t["y"]) >= h_y + int(0.5 * h_h)]
+    lefts = [t for t in lefts if int(t["y"]) >= min_row_y]
+    rights = [t for t in rights if int(t["y"]) >= min_row_y]
 
     for left in lefts:
         lx = int(left["x"])

@@ -400,6 +400,8 @@ def detect_section_blocks_scanned(
     return_debug: bool = False,
 ) -> list[dict[str, Any]] | tuple[list[dict[str, Any]], dict[str, Any]]:
     data = _ocr_data(img_bgr, psm=6)
+    h = img_bgr.shape[0]
+    w = img_bgr.shape[1]
 
     def _normalize_heading_token(token: str) -> str:
         cleaned = re.sub(r"[^A-Z]", "", token.upper())
@@ -467,6 +469,9 @@ def detect_section_blocks_scanned(
 
     def _find_sections(
         min_conf: float,
+        *,
+        max_dist: int = 2,
+        positional_constraints: bool = False,
     ) -> tuple[list[tuple[str, int, int]], list[tuple[str, int, int]]]:
         lines: dict[tuple[int, int, int, int], list[str]] = {}
         first_idx_by_line: dict[tuple[int, int, int, int], int] = {}
@@ -481,6 +486,17 @@ def detect_section_blocks_scanned(
                 conf = -1.0
             if conf < min_conf:
                 continue
+            left = int(data["left"][i])
+            width = int(data["width"][i])
+            top = int(data["top"][i])
+            x_center = left + max(1, width) // 2
+            if positional_constraints:
+                in_left_band = x_center <= int(w * 0.45)
+                in_right_band = x_center >= int(w * 0.55)
+                if not (in_left_band or in_right_band):
+                    continue
+                if top < int(h * 0.10):
+                    continue
 
             key = (
                 int(data["block_num"][i]),
@@ -510,7 +526,10 @@ def detect_section_blocks_scanned(
                 heading_candidates.append((candidate_name, int(data["top"][idx]), x_center))
 
             for section_type, patterns in heading_specs:
-                if any(_fuzzy_substring_match(normalized, pat) for pat in patterns):
+                if any(
+                    _fuzzy_substring_match(normalized, pat, max_dist=max_dist)
+                    for pat in patterns
+                ):
                     idx = first_idx_by_line[key]
                     left = int(data["left"][idx])
                     width = int(data["width"][idx])
@@ -524,6 +543,12 @@ def detect_section_blocks_scanned(
     found, heading_candidates = _find_sections(min_conf=20.0)
     if not found:
         found, heading_candidates = _find_sections(min_conf=10.0)
+    if not found:
+        found, heading_candidates = _find_sections(
+            min_conf=7.0,
+            max_dist=3,
+            positional_constraints=True,
+        )
 
     def _find_studentnumber_anchor_y() -> int | None:
         line_tokens: dict[tuple[int, int, int, int], list[tuple[str, int, int]]] = {}
@@ -574,8 +599,6 @@ def detect_section_blocks_scanned(
         if filtered_candidates:
             heading_candidates = filtered_candidates
 
-    h = img_bgr.shape[0]
-    w = img_bgr.shape[1]
     mid_x = w // 2
     candidate_left_count = sum(1 for _, _, x in heading_candidates if x <= mid_x)
     candidate_right_count = sum(1 for _, _, x in heading_candidates if x > mid_x)
@@ -1221,12 +1244,18 @@ def _find_option_centers_scanned(
     if x1_px <= x0_px:
         return {}
 
-    ocr_centers = _find_option_centers_scanned_from_header_ocr(
+    ocr_centers, ocr_center_debug = _find_option_centers_scanned_from_header_ocr(
         img_bgr=img_bgr,
         section=section,
         labels=labels,
         sx=(img_bgr.shape[1] / page.rect.width),
     )
+    if ocr_center_debug.get("direct_count", 0) or ocr_center_debug.get("inferred_count", 0):
+        print(
+            "[extractor][scanned] option centers header OCR stats: "
+            f"direct={ocr_center_debug.get('direct_count', 0)}, "
+            f"inferred={ocr_center_debug.get('inferred_count', 0)}"
+        )
     if ocr_centers:
         return ocr_centers
 
@@ -1268,24 +1297,39 @@ def _find_option_centers_scanned_from_header_ocr(
     section: dict[str, Any],
     labels: list[str],
     sx: float,
-) -> dict[str, float]:
+) -> tuple[dict[str, float], dict[str, int]]:
     x0_px = max(0, int(section.get("x0_px", 0)))
     x1_px = min(img_bgr.shape[1], int(section.get("x1_px", img_bgr.shape[1])))
     y0_px = max(0, int(section.get("y0_px", 0)))
     y1_px = min(img_bgr.shape[0], int(section.get("y1_px", img_bgr.shape[0])))
     if x1_px <= x0_px or y1_px <= y0_px:
-        return {}
+        return {}, {"direct_count": 0, "inferred_count": 0}
 
     header_h = max(40, min(180, int((y1_px - y0_px) * 0.22)))
     header_roi = img_bgr[y0_px : min(y1_px, y0_px + header_h), x0_px:x1_px]
     if header_roi.size == 0:
-        return {}
+        return {}, {"direct_count": 0, "inferred_count": 0}
 
     data = _ocr_data(header_roi, psm=6)
-    candidates: dict[str, list[float]] = {label: [] for label in labels}
+    candidates: dict[str, list[tuple[float, float]]] = {label: [] for label in labels}
+
+    def _resolve_header_label(token: str) -> str | None:
+        normalized = re.sub(r"[^A-Z0-9]", "", token.upper())
+        if not normalized:
+            return None
+        if normalized in labels:
+            return normalized
+        # Permit partial but unambiguous matches ("(A)", "B.", "C-").
+        if len(normalized) <= 3:
+            hits = [label for label in labels if label in normalized]
+            if len(hits) == 1:
+                return hits[0]
+        return None
+
     for i, txt in enumerate(data["text"]):
-        token = (txt or "").strip().upper()
-        if token not in candidates:
+        token = (txt or "").strip()
+        label = _resolve_header_label(token)
+        if label is None or label not in candidates:
             continue
         try:
             conf = float(data["conf"][i])
@@ -1296,17 +1340,43 @@ def _find_option_centers_scanned_from_header_ocr(
         left = int(data["left"][i])
         width = int(data["width"][i])
         center_px = x0_px + left + (width / 2.0)
-        candidates[token].append(center_px / sx)
+        candidates[label].append((center_px / sx, conf))
 
     resolved: dict[str, float] = {}
+    conf_by_label: dict[str, float] = {}
     for label in labels:
         vals = candidates.get(label) or []
         if vals:
-            resolved[label] = float(np.median(vals))
+            x_vals = [x for x, _ in vals]
+            conf_vals = [c for _, c in vals]
+            resolved[label] = float(np.median(x_vals))
+            conf_by_label[label] = float(np.max(conf_vals))
 
+    high_conf_pairs: list[tuple[int, float, float]] = []
+    for idx, label in enumerate(labels):
+        if label not in resolved:
+            continue
+        max_conf = conf_by_label.get(label, 0.0)
+        if max_conf >= 65.0:
+            high_conf_pairs.append((idx, resolved[label], max_conf))
+
+    inferred_count = 0
+    if len(resolved) < len(labels) and len(high_conf_pairs) >= 2:
+        idxs = np.array([idx for idx, _, _ in high_conf_pairs], dtype=np.float64)
+        xs = np.array([x for _, x, _ in high_conf_pairs], dtype=np.float64)
+        weights = np.array([conf for _, _, conf in high_conf_pairs], dtype=np.float64)
+        slope, intercept = np.polyfit(idxs, xs, deg=1, w=weights)
+        if slope > 0:
+            for idx, label in enumerate(labels):
+                if label in resolved:
+                    continue
+                resolved[label] = float((slope * idx) + intercept)
+                inferred_count += 1
+
+    direct_count = len(resolved) - inferred_count
     if len(resolved) == len(labels):
-        return resolved
-    return {}
+        return resolved, {"direct_count": direct_count, "inferred_count": inferred_count}
+    return {}, {"direct_count": direct_count, "inferred_count": inferred_count}
 
 
 def _rows_px_to_page(

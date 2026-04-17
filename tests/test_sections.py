@@ -197,3 +197,33 @@ def test_detect_section_blocks_scanned_filters_o_heavy_noise_candidates(
     _blocks, debug = extractor_module.detect_section_blocks_scanned(img, return_debug=True)
 
     assert debug["heading_candidates"] == ["TRUEFALSE", "MATCHING", "MULTIPLE"]
+
+
+def test_detect_section_blocks_scanned_uses_relaxed_pass_with_positional_constraints(
+    monkeypatch,
+) -> None:
+    img = np.full((1200, 1000, 3), 255, dtype=np.uint8)
+
+    def _fake_ocr_data(*_args, **_kwargs):
+        return {
+            "text": ["TRUEFAISE", "MATCHINC", "OPEN", "MULTIPLE"],
+            "conf": ["8", "8", "8", "8"],
+            # "OPEN" sits near center and should be rejected by positional constraints.
+            "left": [560, 560, 470, 80],
+            "top": [240, 440, 500, 620],
+            "width": [130, 120, 100, 120],
+            "height": [24, 24, 24, 24],
+            "block_num": [1, 2, 3, 4],
+            "par_num": [1, 1, 1, 1],
+            "line_num": [1, 1, 1, 1],
+            "page_num": [1, 1, 1, 1],
+        }
+
+    monkeypatch.setattr(extractor_module, "_ocr_data", _fake_ocr_data)
+    blocks = extractor_module.detect_section_blocks_scanned(img)
+    section_types = [block["section_type"] for block in blocks]
+
+    assert "OPEN_ENDED" not in section_types
+    assert section_types.count("MC") == 1
+    assert section_types.count("MATCH") == 1
+    assert section_types.count("TF") == 1

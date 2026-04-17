@@ -109,3 +109,33 @@ def test_extract_student_id_handwritten_ocr_uses_bracket_slots_and_zero_for_empt
     detected, low_conf = extract_student_id_handwritten_ocr(img)
     assert detected == "91040"
     assert low_conf is True
+
+
+def test_find_studentnumber_bracket_bounds_requires_studentnumber_heading(monkeypatch) -> None:
+    roi = np.full((120, 300), 255, dtype=np.uint8)
+    fake_data = {
+        "text": ["[", "]"],
+        "conf": [90, 90],
+        "left": [50, 240],
+        "top": [40, 40],
+        "width": [8, 8],
+        "height": [16, 16],
+    }
+    monkeypatch.setattr(student_id_module.pytesseract, "image_to_data", lambda *_args, **_kwargs: fake_data)
+
+    bounds = student_id_module._find_studentnumber_bracket_bounds(roi)
+    assert bounds is None
+
+
+def test_extract_student_id_handwritten_ocr_returns_zeros_when_slots_empty(monkeypatch) -> None:
+    img = np.full((1200, 900, 3), 255, dtype=np.uint8)
+    monkeypatch.setattr(
+        student_id_module,
+        "_find_studentnumber_bracket_bounds",
+        lambda _gray: (20, 20, 220, 80),
+    )
+    monkeypatch.setattr(student_id_module, "detect_with_fallback", lambda *_args, **_kwargs: None)
+
+    detected, low_conf = extract_student_id_handwritten_ocr(img)
+    assert detected == "00000"
+    assert low_conf is True

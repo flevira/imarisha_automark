@@ -33,9 +33,92 @@ OCR_OVERLAY_MIN_CONF_SINGLE_CHAR = 65.0
 _OCR_OVERLAY_CACHE: dict[str, bytes] = {}
 
 
-def has_usable_text_layer(page: fitz.Page) -> bool:
+def _is_suspicious_noise_token(token: str) -> bool:
+    stripped = token.strip()
+    if not stripped:
+        return True
+    if re.fullmatch(r"[^\w]+", stripped):
+        return len(stripped) >= 2
+    if re.search(r"(.)\1{3,}", stripped):
+        return True
+    if len(stripped) >= 6 and len(set(stripped)) <= 2:
+        return True
+    non_alnum_ratio = sum(1 for ch in stripped if not ch.isalnum()) / float(len(stripped))
+    return non_alnum_ratio >= 0.6
+
+
+def evaluate_text_layer_quality(
+    page: fitz.Page,
+    *,
+    spot_check_bbox: bool = True,
+) -> tuple[bool, str, dict[str, float]]:
     text = page.get_text("text", sort=True) or ""
-    return len(re.sub(r"[^A-Za-z0-9]", "", text)) >= OCR_OVERLAY_MIN_ALNUM
+    tokens = re.findall(r"\S+", text)
+    alpha_num_text = re.sub(r"[^A-Za-z0-9]", "", text)
+    alnum_count = len(alpha_num_text)
+    word_tokens = [tok for tok in tokens if re.search(r"[A-Za-z0-9]", tok)]
+
+    page_area = max(1.0, float(page.rect.width * page.rect.height))
+    tokens_per_area_unit = len(word_tokens) / (page_area / 50_000.0)
+    unique_chars = len(set(alpha_num_text.lower()))
+    char_diversity = (unique_chars / float(alnum_count)) if alnum_count else 0.0
+    suspicious_tokens = sum(1 for tok in word_tokens if _is_suspicious_noise_token(tok))
+    suspicious_ratio = (suspicious_tokens / float(len(word_tokens))) if word_tokens else 1.0
+
+    metrics: dict[str, float] = {
+        "alnum_count": float(alnum_count),
+        "token_count": float(len(word_tokens)),
+        "token_density": float(tokens_per_area_unit),
+        "char_diversity": float(char_diversity),
+        "suspicious_ratio": float(suspicious_ratio),
+    }
+
+    if alnum_count < OCR_OVERLAY_MIN_ALNUM:
+        return False, "insufficient_alnum_chars", metrics
+    if len(word_tokens) < 6:
+        return False, "low_token_count", metrics
+    if tokens_per_area_unit < 0.35:
+        return False, "low_token_density", metrics
+    if char_diversity < 0.12:
+        return False, "low_char_diversity", metrics
+    if suspicious_ratio > 0.35:
+        return False, "high_garbage_ratio", metrics
+
+    if spot_check_bbox:
+        try:
+            words = page.get_text("words", sort=True) or []
+        except Exception:
+            words = []
+        if words:
+            x0 = min(float(word[0]) for word in words)
+            y0 = min(float(word[1]) for word in words)
+            x1 = max(float(word[2]) for word in words)
+            y1 = max(float(word[3]) for word in words)
+            spread_x = (x1 - x0) / max(1.0, float(page.rect.width))
+            spread_y = (y1 - y0) / max(1.0, float(page.rect.height))
+            out_of_bounds = sum(
+                1
+                for word in words
+                if float(word[0]) < -2
+                or float(word[1]) < -2
+                or float(word[2]) > (float(page.rect.width) + 2)
+                or float(word[3]) > (float(page.rect.height) + 2)
+            )
+            out_of_bounds_ratio = out_of_bounds / float(len(words))
+            metrics["bbox_spread_x"] = float(spread_x)
+            metrics["bbox_spread_y"] = float(spread_y)
+            metrics["bbox_oob_ratio"] = float(out_of_bounds_ratio)
+            if len(words) >= 12 and (spread_x < 0.15 or spread_y < 0.10):
+                return False, "bbox_spread_mismatch", metrics
+            if out_of_bounds_ratio > 0.20:
+                return False, "bbox_out_of_bounds", metrics
+
+    return True, "quality_ok", metrics
+
+
+def has_usable_text_layer(page: fitz.Page, *, spot_check_bbox: bool = True) -> bool:
+    usable, _, _ = evaluate_text_layer_quality(page, spot_check_bbox=spot_check_bbox)
+    return usable
 
 
 def _bbox_iou(b1: tuple[int, int, int, int], b2: tuple[int, int, int, int]) -> float:
@@ -177,9 +260,14 @@ def create_ocr_overlay_pdf(doc: fitz.Document) -> tuple[fitz.Document, bool, int
         page_rect = src_page.rect
         dst_page = overlay_doc.new_page(width=page_rect.width, height=page_rect.height)
 
-        if has_usable_text_layer(src_page):
+        page_usable, page_reason, _ = evaluate_text_layer_quality(src_page)
+        if page_usable:
             dst_page.show_pdf_page(dst_page.rect, doc, page_idx)
             continue
+        print(
+            f"[extractor] page {page_idx + 1}: text layer rejected for overlay gate "
+            f"({page_reason})"
+        )
 
         applied = True
         pix = src_page.get_pixmap(matrix=fitz.Matrix(RENDER_ZOOM, RENDER_ZOOM), alpha=False)
@@ -250,11 +338,33 @@ def _doc_cache_key(file_path: str) -> str:
 
 
 def _prepare_document_for_extraction(doc: fitz.Document, file_path: str) -> tuple[fitz.Document, bool]:
-    if all(has_usable_text_layer(doc[i]) for i in range(len(doc))):
+    page_quality: list[tuple[bool, str, dict[str, float]]] = []
+    for i in range(len(doc)):
+        page = doc[i]
+        try:
+            usable = bool(has_usable_text_layer(page))
+        except Exception:
+            usable = False
+        if usable:
+            page_quality.append((True, "quality_ok", {}))
+            continue
+        try:
+            page_quality.append(evaluate_text_layer_quality(page, spot_check_bbox=False))
+        except Exception:
+            page_quality.append((False, "text_layer_unavailable", {}))
+
+    if all(item[0] for item in page_quality):
         print("[extractor] Using native text layer")
         return doc, False
 
+    rejected_pages = [str(idx + 1) for idx, item in enumerate(page_quality) if not item[0]]
+    rejected_reasons = [item[1] for item in page_quality if not item[0]]
     print("[extractor] Applying OCR overlay (scanned mode)")
+    if rejected_pages:
+        print(
+            "[extractor] Text layer quality gate forced scanned mode on pages "
+            f"{', '.join(rejected_pages)} (reasons: {', '.join(rejected_reasons)})"
+        )
     cache_key = _doc_cache_key(file_path)
     cached = _OCR_OVERLAY_CACHE.get(cache_key)
     if cached is not None:
@@ -1504,6 +1614,9 @@ def _format_extraction_report(
             [
                 f"Page {page_no}",
                 f"  1) Mode: {page_report['mode']}",
+                "     - text-layer gate: "
+                f"{page_report.get('text_layer_gate_decision', 'unknown')} "
+                f"({page_report.get('text_layer_gate_reason', 'unspecified')})",
                 f"  2) Sections detected: {page_report['sections_detected_total']} "
                 f"(usable: {page_report['sections_used']})",
                 f"     - scanned heading OCR: raw={page_report.get('scan_headings_raw', 0)}, "
@@ -1568,7 +1681,15 @@ def extract_file_with_report(
             img_bgr = render_page_to_bgr(page)
             img_raw_bgr = img_bgr.copy()
         page_number = page_idx + 1
-        use_text_layer = has_usable_text_layer(page)
+        text_gate_metrics: dict[str, float] = {}
+        use_text_layer = bool(has_usable_text_layer(page))
+        text_gate_reason = "quality_ok" if use_text_layer else "quality_reject"
+        if not use_text_layer:
+            try:
+                _, text_gate_reason, text_gate_metrics = evaluate_text_layer_quality(page)
+            except Exception:
+                text_gate_reason = "text_layer_unavailable"
+        text_gate_decision = "accept" if use_text_layer else "reject"
         estimated_skew = _estimate_skew_correction_degrees(img_raw_bgr)
         if (
             not force_text_layer
@@ -1579,6 +1700,8 @@ def extract_file_with_report(
             # often unreliable when the underlying scan is skewed, so force scanned
             # mode so deskew/alignment can be applied consistently.
             use_text_layer = False
+            text_gate_decision = "reject"
+            text_gate_reason = "skew_fallback"
         if not use_text_layer:
             img_raw_bgr = normalize_scanned_page_rotation(img_raw_bgr)
             img_raw_bgr = align_scanned_page_to_template(img_raw_bgr)
@@ -1651,6 +1774,9 @@ def extract_file_with_report(
             "answers_detected_total": 0,
             "rows_unanswered_total": 0,
             "rows_needing_review_total": 0,
+            "text_layer_gate_decision": text_gate_decision,
+            "text_layer_gate_reason": text_gate_reason,
+            "text_layer_gate_metrics": text_gate_metrics,
             "scan_headings_raw": int(scan_section_debug.get("raw_headings_detected", 0)),
             "scan_headings_left": int(scan_section_debug.get("column_left_headings", 0)),
             "scan_headings_right": int(scan_section_debug.get("column_right_headings", 0)),

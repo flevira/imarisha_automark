@@ -44,6 +44,45 @@ def sample_bubble_score(gray: np.ndarray, cx: int, cy: int, radius: int) -> floa
     return 255.0 - float(np.mean(pixels))
 
 
+def sample_bubble_score_with_center_refinement(
+    gray: np.ndarray,
+    cx: int,
+    cy: int,
+    radius: int,
+    *,
+    search_px: int,
+    step_px: int = 2,
+) -> tuple[float, int, int]:
+    """Sample bubble darkness around (cx, cy), allowing small center drift.
+
+    Scanned sheets frequently have tiny row/header OCR offsets. A fixed center can
+    miss the filled region and make real answers look blank. We sample a compact
+    neighborhood and keep the darkest response.
+    """
+    best_score = -1.0
+    best_cx = cx
+    best_cy = cy
+
+    x_candidates = list(range(cx - search_px, cx + search_px + 1, step_px))
+    y_candidates = list(range(cy - search_px, cy + search_px + 1, step_px))
+
+    for yc in y_candidates:
+        if yc < 0 or yc >= gray.shape[0]:
+            continue
+        for xc in x_candidates:
+            if xc < 0 or xc >= gray.shape[1]:
+                continue
+            score = sample_bubble_score(gray, xc, yc, radius)
+            if score > best_score:
+                best_score = score
+                best_cx = xc
+                best_cy = yc
+
+    if best_score < 0:
+        return 0.0, cx, cy
+    return best_score, best_cx, best_cy
+
+
 def extract_row_answers(
     page: fitz.Page,
     img_bgr: np.ndarray,
@@ -71,12 +110,21 @@ def extract_row_answers(
     cy = int(row["y_center"] * sy)
 
     scores: dict[str, float] = {}
+    center_search_px = max(4, int(radius * 0.85))
     for label in ordered_labels:
         if label not in option_centers:
             scores[label] = 0.0
             continue
         cx = int(option_centers[label] * sx)
-        scores[label] = sample_bubble_score(gray, cx, cy, radius)
+        score, _, _ = sample_bubble_score_with_center_refinement(
+            gray,
+            cx,
+            cy,
+            radius,
+            search_px=center_search_px,
+            step_px=2,
+        )
+        scores[label] = score
 
     if not scores:
         return [], True, scores
@@ -93,16 +141,41 @@ def extract_row_answers(
         # without forcing manual review; this is treated as a blank TF response.
         return [], False, {}
 
+    positive_threshold = float(getattr(BUBBLE_MODEL.config, "positive_threshold", 0.55))
+    strong_threshold = float(getattr(BUBBLE_MODEL.config, "strong_threshold", 0.78))
+    uncertainty_band = float(getattr(BUBBLE_MODEL.config, "uncertainty_band", 0.08))
+
+    if section["section_type"] == "MC" and not filled_labels and probabilities:
+        ranked = sorted(probabilities.items(), key=lambda item: item[1], reverse=True)
+        top_label, top_prob = ranked[0]
+        second_prob = ranked[1][1] if len(ranked) > 1 else 0.0
+        if (
+            top_label in output_map
+            and top_prob >= (positive_threshold - uncertainty_band)
+            and (top_prob - second_prob) >= (uncertainty_band * 0.5)
+        ):
+            answers = [output_map[top_label]]
+            debug_scores = {f"score_{key}": value for key, value in scores.items()}
+            debug_scores.update({f"prob_{key}": value for key, value in probabilities.items()})
+            return answers, True, debug_scores
+
     if section["section_type"] == "MATCH" and len(filled_labels) != 1:
-        if len(filled_labels) > 1 and probabilities:
+        if probabilities:
             ranked = sorted(probabilities.items(), key=lambda item: item[1], reverse=True)
             top_label, top_prob = ranked[0]
             second_prob = ranked[1][1] if len(ranked) > 1 else 0.0
-            confident_winner = (
-                top_prob >= BUBBLE_MODEL.config.strong_threshold
-                and (top_prob - second_prob) >= max(0.2, BUBBLE_MODEL.config.uncertainty_band * 2)
+            score_values = sorted(scores.values(), reverse=True)
+            score_gap = score_values[0] - (score_values[1] if len(score_values) > 1 else 0.0)
+
+            has_clear_winner = (
+                top_label in output_map
+                and top_prob >= max(positive_threshold, strong_threshold - uncertainty_band)
+                and (
+                    (top_prob - second_prob) >= (uncertainty_band * 0.5)
+                    or score_gap >= 2.0
+                )
             )
-            if confident_winner and top_label in output_map:
+            if has_clear_winner:
                 answers = [output_map[top_label]]
                 debug_scores = {f"score_{key}": value for key, value in scores.items()}
                 debug_scores.update({f"prob_{key}": value for key, value in probabilities.items()})

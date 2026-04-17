@@ -346,6 +346,84 @@ def _resolve_grid_from_anchors(
     return columns, rows, heading_found
 
 
+def _resolve_grid_from_ocr_labels(gray: np.ndarray) -> tuple[list[float], list[float], bool]:
+    tokens = _ocr_tokens(gray)
+    if not tokens:
+        return [], [], False
+
+    heading = next((t for t in tokens if "STUDENTNUMBER" in str(t["norm"])), None)
+    hash_tok = next((t for t in tokens if str(t["norm"]) == "#"), None)
+    if heading is None or hash_tok is None:
+        return [], [], False
+
+    hash_y = float(hash_tok["cy"])
+    col_tokens = [
+        t
+        for t in tokens
+        if str(t["norm"]) in {"1", "2", "3", "4", "5"}
+        and abs(float(t["cy"]) - hash_y) <= max(22.0, gray.shape[0] * 0.05)
+    ]
+    if len(col_tokens) < 5:
+        return [], [], True
+    col_by_digit = {
+        int(str(t["norm"])): float(t["cx"]) for t in sorted(col_tokens, key=lambda t: float(t["cx"]))
+    }
+    if any(i not in col_by_digit for i in range(1, 6)):
+        return [], [], True
+    columns = [col_by_digit[i] for i in range(1, 6)]
+
+    row_tokens = [t for t in tokens if str(t["norm"]) in {str(i) for i in range(10)}]
+    row_tokens = [t for t in row_tokens if float(t["cy"]) > hash_y + max(8.0, gray.shape[0] * 0.015)]
+    by_digit_row: dict[int, float] = {}
+    for t in sorted(row_tokens, key=lambda t: float(t["cy"])):
+        digit = int(str(t["norm"]))
+        by_digit_row.setdefault(digit, float(t["cy"]))
+
+    if any(i not in by_digit_row for i in range(10)):
+        return [], [], True
+    rows = [by_digit_row[i] for i in range(10)]
+    return columns, rows, True
+
+
+def _extract_student_id_from_grid(
+    gray: np.ndarray,
+    columns: list[float],
+    rows: list[float],
+) -> tuple[str | None, bool]:
+    if len(columns) < 5 or len(rows) < 10:
+        return None, True
+
+    col_gap = float(np.median(np.diff(sorted(columns)))) if len(columns) >= 2 else 36.0
+    row_gap = float(np.median(np.diff(sorted(rows)))) if len(rows) >= 2 else 22.0
+    radius = int(round(max(6.0, min(12.0, min(col_gap, row_gap) * 0.28))))
+
+    scores_by_col: list[list[float]] = [[] for _ in range(5)]
+    for col_idx, cx in enumerate(columns):
+        for cy in rows:
+            score = sample_bubble_score(gray, int(round(cx)), int(round(cy)), radius=radius)
+            scores_by_col[col_idx].append(score)
+
+    digits: list[str] = []
+    low_conf = False
+    for col_scores in scores_by_col:
+        if len(col_scores) != 10:
+            return None, True
+        sorted_scores = sorted(col_scores, reverse=True)
+        top = sorted_scores[0]
+        second = sorted_scores[1] if len(sorted_scores) > 1 else 0.0
+
+        if top < 18.0:
+            digits.append("0")
+            low_conf = True
+            continue
+
+        best_idx = int(np.argmax(col_scores))
+        if (top - second) < 2.5:
+            low_conf = True
+        digits.append(str(best_idx))
+    return "".join(digits), low_conf
+
+
 def extract_student_id_bubble(img_bgr: np.ndarray) -> tuple[str | None, bool]:
     h, w = img_bgr.shape[:2]
     x0 = int(0.02 * w)
@@ -358,40 +436,17 @@ def extract_student_id_bubble(img_bgr: np.ndarray) -> tuple[str | None, bool]:
 
     gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
     candidates = _detect_bubble_candidates(gray)
-    if len(candidates) < 30:
-        return None, True
+    columns: list[float] = []
+    rows: list[float] = []
+    if len(candidates) >= 12:
+        columns, rows, _ = _resolve_grid_from_anchors(gray, candidates)
 
-    columns, rows, _ = _resolve_grid_from_anchors(gray, candidates)
     if len(columns) < 5 or len(rows) < 10:
-        return None, True
-
-    scores_by_col: list[list[float]] = [[] for _ in range(5)]
-    for col_idx, cx in enumerate(columns):
-        for cy in rows:
-            score = sample_bubble_score(gray, int(cx), int(cy), radius=10)
-            scores_by_col[col_idx].append(score)
-
-    digits: list[str] = []
-    low_conf = False
-    for col_scores in scores_by_col:
-        if len(col_scores) != 10:
+        columns, rows, heading_found = _resolve_grid_from_ocr_labels(gray)
+        if not heading_found:
             return None, True
 
-        sorted_scores = sorted(col_scores, reverse=True)
-        top = sorted_scores[0]
-        second = sorted_scores[1] if len(sorted_scores) > 1 else 0.0
-
-        if top < 30.0:
-            digits.append("0")
-            low_conf = True
-            continue
-
-        best_idx = int(np.argmax(col_scores))
-        if (top - second) < 3.0:
-            low_conf = True
-        digits.append(str(best_idx))
-
-    return "".join(digits), low_conf
+    return _extract_student_id_from_grid(gray, columns, rows)
 
 
 def resolve_student_id(

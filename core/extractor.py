@@ -1676,7 +1676,9 @@ def extract_file_with_report(
         elif qr_type == "TEST":
             test_id = qr_parsed.get("testid") or qr_parsed.get("assessmentid")
 
-        bubble_id, _ = extract_student_id_bubble(img_raw_bgr)
+        bubble_id, _ = extract_student_id_bubble(img_bgr)
+        if bubble_id is None:
+            bubble_id, _ = extract_student_id_bubble(img_raw_bgr)
         handwritten_id, _ = extract_student_id_handwritten_ocr(img_raw_bgr)
 
         id_info = resolve_student_id(

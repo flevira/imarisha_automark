@@ -152,8 +152,27 @@ def detect_with_fallback(
 ) -> OCRCandidate | None:
     variant_hits: list[str] = []
     primary_hits: list[OCRCandidate] = []
+    # Historical name retained for compatibility. This is now a generic
+    # confidence gate for the primary OCR pool (Paddle + Tesseract).
+    min_primary_confidence = min_tesseract_confidence
 
-    # Primary OCR path: PaddleOCR
+    def _consistency_boost(text: str) -> float:
+        count = variant_hits.count(text)
+        return min(18.0, float(count - 1) * 6.0)
+
+    def _engine_bias(candidate: OCRCandidate) -> float:
+        if candidate.engine == "tesseract":
+            # Numeric/whitelisted Tesseract hits are often highly precise even
+            # when confidence is slightly lower than neural engines.
+            return 10.0 if candidate.text.isdigit() else 6.0
+        if candidate.engine == "easyocr":
+            return 2.0
+        return 0.0
+
+    def _score(candidate: OCRCandidate) -> float:
+        return candidate.confidence + _consistency_boost(candidate.text) + _engine_bias(candidate)
+
+    # Primary OCR path: PaddleOCR + Tesseract
     for variant in variants:
         gray = _to_gray(variant)
         paddle_hits = _match_candidates(
@@ -164,22 +183,27 @@ def detect_with_fallback(
         )
         primary_hits.extend(paddle_hits)
         variant_hits.extend([hit.text for hit in paddle_hits])
-
-    def _consistency_boost(text: str) -> float:
-        count = variant_hits.count(text)
-        return min(18.0, float(count - 1) * 6.0)
+        for config in tesseract_configs:
+            tesseract_hits = _match_candidates(
+                _extract_tokens_tesseract(gray, config),
+                pattern,
+                min_len=min_len,
+                max_len=max_len,
+            )
+            primary_hits.extend(tesseract_hits)
+            variant_hits.extend([hit.text for hit in tesseract_hits])
 
     if primary_hits:
         best_primary = max(
             primary_hits,
-            key=lambda c: c.confidence + _consistency_boost(c.text),
+            key=_score,
         )
-        boosted_conf = best_primary.confidence + _consistency_boost(best_primary.text)
-        if boosted_conf >= min_tesseract_confidence:
+        boosted_conf = _score(best_primary)
+        if boosted_conf >= min_primary_confidence:
             return OCRCandidate(
                 text=best_primary.text,
                 confidence=boosted_conf,
-                engine="paddleocr",
+                engine=best_primary.engine,
             )
 
     # Fallback OCR path: EasyOCR
@@ -201,10 +225,10 @@ def detect_with_fallback(
     combined = primary_hits + fallback_hits
     best = max(
         combined,
-        key=lambda c: c.confidence + _consistency_boost(c.text) + (4.0 if c.engine != "paddleocr" else 0.0),
+        key=_score,
     )
     return OCRCandidate(
         text=best.text,
-        confidence=best.confidence + _consistency_boost(best.text),
+        confidence=_score(best),
         engine=best.engine,
     )

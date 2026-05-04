@@ -229,6 +229,12 @@ def extract_row_answers(
     radius = max(10, int((row_h_page * sy) * 0.38))
     cy = int(row["y_center"] * sy)
 
+    if section["section_type"] == "TF":
+        print(f"[BUBBLE_DEBUG] QID={row.get('question_id', 'unknown')}")
+        print(f"  Row height (page): {row_h_page:.2f}, Row height (image): {row_h_page * sy:.2f}")
+        print(f"  Calculated radius: {radius}")
+        print(f"  Row y_center (page): {row['y_center']}, Row y_center (image): {cy}")
+
     scores: dict[str, float] = {}
     metrics: dict[str, dict[str, float]] = {}
     center_search_px = max(8, int(radius * 0.85))
@@ -246,6 +252,14 @@ def extract_row_answers(
             step_px=2,
         )
         m = _bubble_composite_metrics(img_bgr, gray, best_cx, best_cy, radius)
+
+        if section["section_type"] == "TF":
+            print(f"[BUBBLE_DEBUG] QID={row.get('question_id', 'unknown')}, Label={label}")
+            print(f"  Center: cx={cx}, cy={cy}, radius={radius}, search_px={center_search_px}")
+            print(f"  Refined: best_cx={best_cx}, best_cy={best_cy}")
+            print(f"  Raw score: {score:.2f}")
+            print(f"  Metrics: fill={m.get('fill', 0.0):.4f}, stroke={m.get('stroke', 0.0):.4f}, darkness={m.get('darkness', 0.0):.4f}, blue={m.get('blue', 0.0):.4f}")
+
         # Composite score reduces strict dependence on fill darkness alone.
         composite = (
             0.45 * m.get("darkness", 0.0)
@@ -255,6 +269,9 @@ def extract_row_answers(
         )
         metrics[label] = m
         scores[label] = (score * 0.5) + (composite * 100.0)
+
+        if section["section_type"] == "TF":
+            print(f"  Final score: {scores[label]:.2f}")
 
     if not scores:
         return [], True, scores

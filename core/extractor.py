@@ -950,6 +950,18 @@ def extract_rows_for_section_scanned(
         )
 
     rows = _dedupe_scanned_row_candidates(row_candidates)
+    flagged = _row_consistency_flags(rows, str(section["section_type"]))
+    if flagged:
+        debug["rows_low_confidence_count"] = len(flagged)
+        for idx in sorted(flagged):
+            if 0 <= idx < len(rows):
+                rows[idx]["needs_review"] = True
+                rows[idx]["low_confidence_reason"] = "row_consistency"
+                if rows[idx].get("question_id") is None:
+                    row_roi = img_bgr[int(rows[idx]["row_bbox_px"][1]):int(rows[idx]["row_bbox_px"][3]), x0:x1]
+                    remap_qid = extract_question_id_with_fallbacks(row_roi, section_type=str(section["section_type"]))
+                    if remap_qid:
+                        rows[idx]["question_id"] = remap_qid
     debug["rows_candidate_count"] = len(row_candidates)
     debug["rows_dropped_missing_item_number"] = rows_dropped_missing_item_number
     debug["rows_missing_question_id"] = missing_qid
@@ -1257,7 +1269,7 @@ def _find_option_centers_scanned(
             f"inferred={ocr_center_debug.get('inferred_count', 0)}"
         )
     if ocr_centers:
-        return ocr_centers
+        return _enforce_monotonic_option_centers(ocr_centers, labels)
 
     left_margin = 0.06
     usable_width = 0.88
@@ -1289,7 +1301,7 @@ def _find_option_centers_scanned(
                 best_x = xc
         centers[lbl] = best_x / sx
 
-    return centers
+    return _enforce_monotonic_option_centers(centers, labels)
 
 
 def _find_option_centers_scanned_from_header_ocr(
@@ -1377,6 +1389,51 @@ def _find_option_centers_scanned_from_header_ocr(
     if len(resolved) == len(labels):
         return resolved, {"direct_count": direct_count, "inferred_count": inferred_count}
     return {}, {"direct_count": direct_count, "inferred_count": inferred_count}
+
+
+def _enforce_monotonic_option_centers(
+    centers: dict[str, float],
+    labels: list[str],
+) -> dict[str, float]:
+    if not centers:
+        return centers
+    adjusted = dict(centers)
+    last = None
+    eps = 0.5
+    for label in labels:
+        if label not in adjusted:
+            continue
+        cur = float(adjusted[label])
+        if last is not None and cur <= last:
+            cur = last + eps
+            adjusted[label] = cur
+        last = cur
+    return adjusted
+
+
+def _row_consistency_flags(rows: list[dict[str, Any]], section_type: str) -> set[int]:
+    flags: set[int] = set()
+    if len(rows) < 3:
+        return flags
+    ys = [float(r.get("y_center_px", 0.0)) for r in rows]
+    gaps = np.diff(np.array(ys, dtype=np.float64))
+    median_gap = float(np.median(gaps)) if gaps.size else 0.0
+    if median_gap <= 0:
+        return set(range(len(rows)))
+    for idx, g in enumerate(gaps):
+        if abs(float(g) - median_gap) > max(6.0, median_gap * 0.55):
+            flags.add(idx)
+            flags.add(idx + 1)
+
+    if section_type == "MATCH":
+        xs = [float(r.get("row_bbox_px", (0,0,0,0))[0]) for r in rows]
+    else:
+        xs = [float(r.get("row_bbox_px", (0,0,0,0))[0]) for r in rows]
+    med_x = float(np.median(xs))
+    for idx, x in enumerate(xs):
+        if abs(x - med_x) > 14.0:
+            flags.add(idx)
+    return flags
 
 
 def _rows_px_to_page(

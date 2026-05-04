@@ -309,10 +309,31 @@ def extract_row_answers(
 
 
     needs_review = model_review
+
     if section["section_type"] == "TF" and len(filled_labels) != 1:
-        # When both T/F are detected (or neither), normalize to unanswered
-        # without forcing manual review; this is treated as a blank TF response.
-        return [], False, {}
+        # TF questions: handle both-marked or neither-marked cases intelligently.
+        score_t = calibrated_scores.get("T", 0.0)
+        score_f = calibrated_scores.get("F", 0.0)
+
+        # If both are truly blank (both < 30 calibrated), return unanswered.
+        if score_t < 30.0 and score_f < 30.0:
+            return [], False, {f"score_{k}": v for k, v in scores.items()}
+
+        # If both are marked, pick the stronger one.
+        if len(filled_labels) == 2:  # Both T and F detected
+            if score_t > score_f:
+                filled_labels = ["T"]
+                # Flag for review if they're too close (ambiguous, within 20%).
+                if (score_t - score_f) < (score_t * 0.20):
+                    needs_review = True
+            else:
+                filled_labels = ["F"]
+                # Flag for review if they're too close (ambiguous, within 20%).
+                if (score_f - score_t) < (score_f * 0.20):
+                    needs_review = True
+        # If neither marked, return unanswered.
+        elif len(filled_labels) == 0:
+            return [], False, {f"score_{k}": v for k, v in scores.items()}
 
     positive_threshold = float(getattr(BUBBLE_MODEL.config, "positive_threshold", 0.55))
     strong_threshold = float(getattr(BUBBLE_MODEL.config, "strong_threshold", 0.78))

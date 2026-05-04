@@ -77,7 +77,17 @@ def detect_section_blocks(page: fitz.Page) -> list[SectionBlock]:
 
 def find_option_centers(page: fitz.Page, section: SectionBlock) -> dict[str, float]:
     words = get_page_words(page)
-    top_zone_y1 = section["y0"] + 80
+
+    # MATCH sections list items vertically (one per row, ~25-30 px each), so all
+    # four labels can span up to ~150 px below the section start.  MC/TF headers
+    # are compact and fit within 80 px.
+    _top_zone_heights: dict[str, int] = {
+        "MC": 80,
+        "TF": 80,
+        "MATCH": 150,
+    }
+    zone_height = _top_zone_heights.get(section["section_type"], 80)
+    top_zone_y1 = section["y0"] + zone_height
 
     labels_by_section = {
         "MC": ["A", "B", "C", "D"],

@@ -297,43 +297,15 @@ def extract_row_answers(
     if probabilities:
         filled_labels = [label for label in ordered_labels if probabilities.get(label, 0.0) >= adaptive_positive]
 
-    # MC multi-mark resolution: when the model (or adaptive threshold) selects
-    # more than one answer for an MC row, decide whether it is a genuine
-    # intentional multi-mark or just noise/smudge on a secondary bubble.
+    # MC single-answer enforcement: MC questions must always have exactly one
+    # answer. If multiple options passed the adaptive threshold, keep only the
+    # highest-probability one and flag for review when it falls in the
+    # ambiguous confidence range (0.45–0.65).
     if section["section_type"] == "MC" and len(filled_labels) > 1:
-        if not _is_intentional_multi_mark(
-            ordered_labels,
-            calibrated_scores,
-            probabilities,
-            filled_labels,
-        ):
-            # One answer is clearly dominant — keep only the strongest one.
-            dominant_label = max(filled_labels, key=lambda lbl: calibrated_scores.get(lbl, 0.0))
-            filled_labels = [dominant_label]
-            # Flag for review only when the dominant answer itself is in the
-            # ambiguous confidence range (0.45–0.65), otherwise accept it cleanly.
-            dom_prob = probabilities.get(dominant_label, 0.0)
-            model_review = 0.45 <= dom_prob <= 0.65
-        else:
-            # Even when scores look similar, enforce a single answer for MC
-            # unless the top two probabilities are within 5% of each other
-            # (truly indistinguishable).  This prevents the adaptive threshold
-            # from exporting both A and B when both happen to exceed the cutoff.
-            ranked_filled = sorted(
-                filled_labels,
-                key=lambda lbl: probabilities.get(lbl, 0.0),
-                reverse=True,
-            )
-            top_prob_f = probabilities.get(ranked_filled[0], 0.0)
-            second_prob_f = probabilities.get(ranked_filled[1], 0.0) if len(ranked_filled) > 1 else 0.0
-            if (top_prob_f - second_prob_f) >= 0.05:
-                # Clear enough winner — keep only the top answer.
-                filled_labels = [ranked_filled[0]]
-                dom_prob = top_prob_f
-                model_review = 0.45 <= dom_prob <= 0.65
-            else:
-                # Genuinely ambiguous multi-mark — flag for human review.
-                model_review = True
+        best_label = max(filled_labels, key=lambda lbl: probabilities.get(lbl, 0.0))
+        filled_labels = [best_label]
+        best_prob = probabilities.get(best_label, 0.0)
+        model_review = 0.45 <= best_prob <= 0.65
 
 
     needs_review = model_review

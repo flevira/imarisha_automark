@@ -144,6 +144,64 @@ def sample_bubble_score_with_center_refinement(
     return best_score, best_cx, best_cy
 
 
+def _is_intentional_multi_mark(
+    ordered_labels: list[str],
+    scores: dict[str, float],
+    probabilities: dict[str, float],
+    filled_labels: list[str],
+    *,
+    similarity_threshold: float = 0.10,
+    dominance_threshold: float = 0.20,
+) -> bool:
+    """Determine whether multiple filled bubbles represent a genuine multi-mark.
+
+    Returns True only when all filled answers have similar darkness scores
+    (within ``similarity_threshold`` of the maximum score), meaning the student
+    deliberately filled more than one bubble.
+
+    Returns False when one answer is clearly dominant — its score exceeds every
+    other filled answer by more than ``dominance_threshold`` of the max score —
+    indicating the secondary marks are noise or accidental smudges.
+
+    Args:
+        ordered_labels: All option labels for this row (e.g. ["A","B","C","D"]).
+        scores: Raw darkness scores keyed by label.
+        probabilities: Model confidence probabilities keyed by label.
+        filled_labels: Labels the model classified as filled.
+        similarity_threshold: Max fractional score gap allowed for marks to be
+            considered "similar" (default 10 %).
+        dominance_threshold: Minimum fractional score gap required for one mark
+            to be considered "clearly dominant" (default 20 %).
+    """
+    if len(filled_labels) <= 1:
+        return False  # Not a multi-mark situation
+
+    filled_scores = [scores.get(label, 0.0) for label in filled_labels]
+    if not filled_scores:
+        return False
+
+    max_score = max(filled_scores)
+    if max_score <= 0:
+        return False
+
+    # Check whether any secondary answer is clearly weaker than the strongest.
+    for label in filled_labels:
+        s = scores.get(label, 0.0)
+        gap_fraction = (max_score - s) / max_score
+        if gap_fraction > dominance_threshold:
+            # One answer is clearly dominant — this is NOT an intentional multi-mark.
+            return False
+
+    # All filled answers are within similarity_threshold of the max — intentional.
+    for label in filled_labels:
+        s = scores.get(label, 0.0)
+        gap_fraction = (max_score - s) / max_score
+        if gap_fraction > similarity_threshold:
+            return False
+
+    return True
+
+
 def extract_row_answers(
     page: fitz.Page,
     img_bgr: np.ndarray,
@@ -172,7 +230,7 @@ def extract_row_answers(
 
     scores: dict[str, float] = {}
     metrics: dict[str, dict[str, float]] = {}
-    center_search_px = max(4, int(radius * 0.85))
+    center_search_px = max(8, int(radius * 0.85))
     for label in ordered_labels:
         if label not in option_centers:
             scores[label] = 0.0
@@ -221,6 +279,27 @@ def extract_row_answers(
     # Optional adaptive threshold override after model classification.
     if probabilities:
         filled_labels = [label for label in ordered_labels if probabilities.get(label, 0.0) >= adaptive_positive]
+
+    # MC multi-mark resolution: when the model (or adaptive threshold) selects
+    # more than one answer for an MC row, decide whether it is a genuine
+    # intentional multi-mark or just noise/smudge on a secondary bubble.
+    if section["section_type"] == "MC" and len(filled_labels) > 1:
+        if not _is_intentional_multi_mark(
+            ordered_labels,
+            calibrated_scores,
+            probabilities,
+            filled_labels,
+        ):
+            # One answer is clearly dominant — keep only the strongest one.
+            dominant_label = max(filled_labels, key=lambda lbl: calibrated_scores.get(lbl, 0.0))
+            filled_labels = [dominant_label]
+            # Flag for review only when the dominant answer itself is in the
+            # ambiguous confidence range (0.45–0.65), otherwise accept it cleanly.
+            dom_prob = probabilities.get(dominant_label, 0.0)
+            model_review = 0.45 <= dom_prob <= 0.65
+        else:
+            # Genuinely ambiguous multi-mark — flag for human review.
+            model_review = True
 
     needs_review = model_review
     if section["section_type"] == "TF" and len(filled_labels) != 1:

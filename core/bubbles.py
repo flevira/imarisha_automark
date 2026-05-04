@@ -259,6 +259,13 @@ def extract_row_answers(
     if not scores:
         return [], True, scores
 
+    # Diagnostic logging for TF questions — emitted before any filtering so we
+    # always capture raw scores even when the question is later declared blank.
+    if section["section_type"] == "TF":
+        _qid = row.get("question_id", "unknown")
+        print(f"[TF_DEBUG] QID={_qid}")
+        print(f"  Raw scores: T={scores.get('T', 0.0):.2f}, F={scores.get('F', 0.0):.2f}")
+
     # Strict blank detection: treat the row as unanswered when all bubble scores
     # are uniformly low (student left the question blank).  Two independent
     # criteria are checked on the raw (pre-calibration) scores:
@@ -273,6 +280,9 @@ def extract_row_answers(
         _all_below_floor = _raw_max < 30.0
         _flat_and_weak = _raw_spread < 5.0 and _raw_max < 50.0
         if _all_below_floor or _flat_and_weak:
+            if section["section_type"] == "TF":
+                _reason = "both < 30 (all_below_floor)" if _all_below_floor else f"flat+weak (spread={_raw_spread:.2f}, max={_raw_max:.2f})"
+                print(f"[TF_DEBUG] QID={row.get('question_id', 'unknown')} → BLANK ({_reason})")
             return [], False, {f"score_{k}": v for k, v in scores.items()}
 
     # Row-local calibration pass: use likely empty bubbles as local baseline.
@@ -307,11 +317,24 @@ def extract_row_answers(
         best_prob = probabilities.get(best_label, 0.0)
         model_review = 0.45 <= best_prob <= 0.65
 
+    # Emit post-calibration / post-classification diagnostics for TF questions.
+    if section["section_type"] == "TF":
+        print(f"  Baseline: {baseline:.2f}")
+        print(f"  Calibrated: T={calibrated_scores.get('T', 0.0):.2f}, F={calibrated_scores.get('F', 0.0):.2f}")
+        print(f"  Probabilities: T={probabilities.get('T', 0.0):.4f}, F={probabilities.get('F', 0.0):.4f}")
+        print(f"  Adaptive threshold: {adaptive_positive:.4f}")
+        print(f"  Filled labels: {filled_labels}")
 
     needs_review = model_review
     if section["section_type"] == "TF" and len(filled_labels) != 1:
         # When both T/F are detected (or neither), normalize to unanswered
         # without forcing manual review; this is treated as a blank TF response.
+        _qid = row.get("question_id", "unknown")
+        if len(filled_labels) == 0:
+            _tf_reason = f"no label passed threshold (T={probabilities.get('T', 0.0):.4f}, F={probabilities.get('F', 0.0):.4f}, threshold={adaptive_positive:.4f})"
+        else:
+            _tf_reason = f"ambiguous — both T and F detected: {filled_labels}"
+        print(f"[TF_DEBUG] QID={_qid} → UNANSWERED ({_tf_reason})")
         return [], False, {}
 
     positive_threshold = float(getattr(BUBBLE_MODEL.config, "positive_threshold", 0.55))

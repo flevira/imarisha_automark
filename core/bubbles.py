@@ -44,6 +44,67 @@ def sample_bubble_score(gray: np.ndarray, cx: int, cy: int, radius: int) -> floa
     return 255.0 - float(np.mean(pixels))
 
 
+def _bubble_composite_metrics(
+    img_bgr: np.ndarray,
+    gray: np.ndarray,
+    cx: int,
+    cy: int,
+    radius: int,
+) -> dict[str, float]:
+    """Compute multi-signal confidence metrics for one bubble center."""
+    x0 = max(0, cx - radius)
+    y0 = max(0, cy - radius)
+    x1 = min(gray.shape[1], cx + radius)
+    y1 = min(gray.shape[0], cy + radius)
+    if x1 <= x0 or y1 <= y0:
+        return {"fill": 0.0, "stroke": 0.0, "blue": 0.0}
+
+    roi_gray = gray[y0:y1, x0:x1]
+    roi_bgr = img_bgr[y0:y1, x0:x1]
+    if roi_gray.size == 0:
+        return {"fill": 0.0, "stroke": 0.0, "blue": 0.0}
+
+    h, w = roi_gray.shape[:2]
+    yy, xx = np.ogrid[:h, :w]
+    cx0 = w / 2.0
+    cy0 = h / 2.0
+    r_outer = min(h, w) / 2.2
+    r_center = max(2.0, r_outer * 0.55)
+    outer_mask = (xx - cx0) ** 2 + (yy - cy0) ** 2 <= r_outer**2
+    center_mask = (xx - cx0) ** 2 + (yy - cy0) ** 2 <= r_center**2
+
+    if not np.any(outer_mask):
+        return {"fill": 0.0, "stroke": 0.0, "blue": 0.0}
+
+    bubble_pixels = roi_gray[outer_mask]
+    # Fill ratio in circle (adaptive local Otsu inside bubble ROI)
+    blur = cv2.GaussianBlur(roi_gray, (3, 3), 0)
+    _, inv = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+    fill_ratio = float(np.mean(inv[outer_mask] > 0))
+
+    # Stroke density near center to emphasize actual pen marks
+    gradx = cv2.Sobel(roi_gray, cv2.CV_32F, 1, 0, ksize=3)
+    grady = cv2.Sobel(roi_gray, cv2.CV_32F, 0, 1, ksize=3)
+    grad_mag = cv2.magnitude(gradx, grady)
+    center_grad = grad_mag[center_mask] if np.any(center_mask) else grad_mag[outer_mask]
+    stroke_density = float(np.mean(center_grad > np.percentile(grad_mag, 75)))
+
+    # Blue-ink emphasis: higher when B channel exceeds R/G
+    b = roi_bgr[:, :, 0].astype(np.float32)
+    g = roi_bgr[:, :, 1].astype(np.float32)
+    r = roi_bgr[:, :, 2].astype(np.float32)
+    blue_excess = np.clip(b - ((r + g) * 0.5), 0, 255)
+    blue_conf = float(np.mean(blue_excess[outer_mask]) / 255.0)
+
+    darkness = float((255.0 - np.mean(bubble_pixels)) / 255.0)
+    return {
+        "fill": fill_ratio,
+        "stroke": stroke_density,
+        "blue": blue_conf,
+        "darkness": darkness,
+    }
+
+
 def sample_bubble_score_with_center_refinement(
     gray: np.ndarray,
     cx: int,
@@ -110,13 +171,14 @@ def extract_row_answers(
     cy = int(row["y_center"] * sy)
 
     scores: dict[str, float] = {}
+    metrics: dict[str, dict[str, float]] = {}
     center_search_px = max(4, int(radius * 0.85))
     for label in ordered_labels:
         if label not in option_centers:
             scores[label] = 0.0
             continue
         cx = int(option_centers[label] * sx)
-        score, _, _ = sample_bubble_score_with_center_refinement(
+        score, best_cx, best_cy = sample_bubble_score_with_center_refinement(
             gray,
             cx,
             cy,
@@ -124,16 +186,41 @@ def extract_row_answers(
             search_px=center_search_px,
             step_px=2,
         )
-        scores[label] = score
+        m = _bubble_composite_metrics(img_bgr, gray, best_cx, best_cy, radius)
+        # Composite score reduces strict dependence on fill darkness alone.
+        composite = (
+            0.45 * m.get("darkness", 0.0)
+            + 0.30 * m.get("fill", 0.0)
+            + 0.15 * m.get("stroke", 0.0)
+            + 0.10 * m.get("blue", 0.0)
+        )
+        metrics[label] = m
+        scores[label] = (score * 0.5) + (composite * 100.0)
 
     if not scores:
         return [], True, scores
 
-    filled_labels, model_review, probabilities = BUBBLE_MODEL.classify(
+    # Row-local calibration pass: use likely empty bubbles as local baseline.
+    ordered_score_vals = np.array([scores[label] for label in ordered_labels if label in scores], dtype=np.float32)
+    baseline = float(np.percentile(ordered_score_vals, 35)) if ordered_score_vals.size else 0.0
+    calibrated_scores = {k: max(0.0, v - baseline) for k, v in scores.items()}
+
+    # Adaptive thresholding per section block type (only when model config is available).
+    section_positive_offsets = {"MC": 0.00, "TF": -0.04, "MATCH": -0.02}
+    base_positive = float(getattr(getattr(BUBBLE_MODEL, "config", object()), "positive_threshold", 0.55))
+    adaptive_positive = max(0.45, min(0.8, base_positive + section_positive_offsets.get(section["section_type"], 0.0)))
+
+    # keep original classifier behavior for ambiguity handling with calibrated scores
+    filled_labels, model_review2, probabilities = BUBBLE_MODEL.classify(
         ordered_labels=ordered_labels,
-        scores=scores,
+        scores=calibrated_scores,
         allow_multiple_answers=(section["section_type"] == "MC"),
     )
+    model_review = bool(model_review2)
+
+    # Optional adaptive threshold override after model classification.
+    if probabilities:
+        filled_labels = [label for label in ordered_labels if probabilities.get(label, 0.0) >= adaptive_positive]
 
     needs_review = model_review
     if section["section_type"] == "TF" and len(filled_labels) != 1:
@@ -186,8 +273,9 @@ def extract_row_answers(
     if not answers:
         return [], needs_review, {}
 
-    debug_scores = {f"score_{key}": value for key, value in scores.items()}
+    debug_scores = {f"score_{key}": value for key, value in calibrated_scores.items()}
     debug_scores.update({f"prob_{key}": value for key, value in probabilities.items()})
+    debug_scores.update({f"baseline_{section['section_type']}": baseline, "adaptive_positive_threshold": adaptive_positive})
     return answers, needs_review, debug_scores
 
 

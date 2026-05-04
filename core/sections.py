@@ -110,12 +110,24 @@ def find_option_centers(page: fitz.Page, section: SectionBlock) -> dict[str, flo
         if clean in labels and clean not in centers:
             centers[clean] = (x0 + x1) / 2.0
 
-    # Geometric fallback for MC and MATCHING sections: if option C is missing but
-    # A, B, and D are all detected, infer C as the midpoint between B and D.  OCR
-    # occasionally skips the "C" label when it falls in a visually busy row or
-    # near a section boundary, leaving score_C=0.0 for every item in the block.
+    # Geometric fallback for MC and MATCHING sections: if option C is missing, infer
+    # its position from whatever other labels were detected.  OCR occasionally skips
+    # the "C" label when it falls in a visually busy row or near a section boundary,
+    # leaving score_C=0.0 for every item in the block.  MC option labels are evenly
+    # spaced horizontally, so any two known positions are enough to reconstruct C.
     if "C" not in centers:
+        # Scenario 1: A, B, D all detected → C = midpoint(B, D)
         if "A" in centers and "B" in centers and "D" in centers:
+            centers["C"] = (centers["B"] + centers["D"]) / 2.0
+        # Scenario 2: A, B detected but D missing → C = B + (B - A)
+        elif "A" in centers and "B" in centers:
+            spacing = centers["B"] - centers["A"]
+            centers["C"] = centers["B"] + spacing
+        # Scenario 3: A, D detected but B missing → C = midpoint(A, D)
+        elif "A" in centers and "D" in centers:
+            centers["C"] = (centers["A"] + centers["D"]) / 2.0
+        # Scenario 4: B, D detected but A missing → C = midpoint(B, D)
+        elif "B" in centers and "D" in centers:
             centers["C"] = (centers["B"] + centers["D"]) / 2.0
 
     return centers

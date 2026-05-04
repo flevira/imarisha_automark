@@ -5,7 +5,7 @@ Verifies that:
 - MATCH sections use a 150 px search zone (labels spread vertically, one per item row).
 - Option C is detected in MATCH sections even when its label falls beyond 80 px.
 - Option C is inferred geometrically (midpoint of B and D) when OCR misses it in MATCH.
-- The geometric fallback is NOT applied to MC sections.
+- Option C is inferred geometrically (midpoint of B and D) when OCR misses it in MC.
 """
 from __future__ import annotations
 
@@ -183,15 +183,15 @@ def test_match_does_not_infer_c_when_only_a_and_b_detected(monkeypatch) -> None:
     assert "D" not in centers
 
 
-def test_mc_does_not_apply_match_fallback(monkeypatch) -> None:
-    """The geometric C-fallback must NOT apply to MC sections."""
+def test_mc_infers_c_from_b_and_d_when_ocr_misses_c(monkeypatch) -> None:
+    """The geometric C-fallback applies to MC sections when OCR misses the C label."""
     section = {"section_type": "MC", "y0": 100.0, "y1": 500.0, "x0": 0.0, "x1": 600.0}
 
-    # Only A, B, D present in the header row — C is missing.
+    # Only A, B, D present in the header row — C is missing (simulates OCR miss).
     words = [
-        (50.0, 108.0, 60.0, 118.0, "A"),
-        (80.0, 108.0, 90.0, 118.0, "B"),
-        (140.0, 108.0, 150.0, 118.0, "D"),
+        (50.0, 108.0, 60.0, 118.0, "A"),   # center_x = 55.0
+        (80.0, 108.0, 90.0, 118.0, "B"),   # center_x = 85.0
+        (140.0, 108.0, 150.0, 118.0, "D"), # center_x = 145.0
     ]
     monkeypatch.setattr(sections_module, "get_page_words", lambda _: words)
 
@@ -201,4 +201,6 @@ def test_mc_does_not_apply_match_fallback(monkeypatch) -> None:
     assert "A" in centers
     assert "B" in centers
     assert "D" in centers
-    assert "C" not in centers, "MC sections must not use the MATCH geometric fallback"
+    assert "C" in centers, "MC sections must infer C geometrically when OCR misses it"
+    # Midpoint of B (85.0) and D (145.0) = 115.0
+    assert centers["C"] == pytest.approx(115.0)

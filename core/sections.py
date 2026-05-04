@@ -110,11 +110,11 @@ def find_option_centers(page: fitz.Page, section: SectionBlock) -> dict[str, flo
         if clean in labels and clean not in centers:
             centers[clean] = (x0 + x1) / 2.0
 
-    # Geometric fallback for MATCHING sections: if option C is missing but A, B,
-    # and D are all detected, infer C as the midpoint between B and D.  OCR
+    # Geometric fallback for MC and MATCHING sections: if option C is missing but
+    # A, B, and D are all detected, infer C as the midpoint between B and D.  OCR
     # occasionally skips the "C" label when it falls in a visually busy row or
     # near a section boundary, leaving score_C=0.0 for every item in the block.
-    if section["section_type"] == "MATCH" and "C" not in centers:
+    if "C" not in centers:
         if "A" in centers and "B" in centers and "D" in centers:
             centers["C"] = (centers["B"] + centers["D"]) / 2.0
 

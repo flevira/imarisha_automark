@@ -54,7 +54,12 @@ def extract_rows_for_section(page: fitz.Page, section: dict[str, Any]) -> list[R
 
     candidate_lines = lines[header_idx + 1 :] if header_idx is not None else lines
 
-    for line in candidate_lines:
+    # Pre-compute section geometry for TF y_center blending.
+    _section_height = float(section["y1"]) - float(section["y0"])
+    _num_rows_estimate = max(1, len(candidate_lines))
+    _row_spacing = _section_height / _num_rows_estimate
+
+    for idx, line in enumerate(candidate_lines):
         texts = [w[4].strip() for w in line if w[4].strip()]
         if not texts:
             continue
@@ -69,10 +74,21 @@ def extract_rows_for_section(page: fitz.Page, section: dict[str, Any]) -> list[R
         xs1 = [w[2] for w in line]
         ys1 = [w[3] for w in line]
         bbox = (min(xs), min(ys0), max(xs1), max(ys1))
-        y_center = (bbox[1] + bbox[3]) / 2.0
+        text_y = (bbox[1] + bbox[3]) / 2.0
+
+        if section["section_type"] == "TF":
+            # For TF sections the question-ID text can appear at a different
+            # vertical position than the actual bubble row.  Blend the
+            # text-derived y with an estimate based on the row's index within
+            # the section so that bubble sampling lands on the correct row.
+            expected_y = float(section["y0"]) + (idx * _row_spacing) + (_row_spacing / 2.0)
+            y_center = text_y * 0.3 + expected_y * 0.7
+        else:
+            y_center = text_y
 
         if section["section_type"] in {"MC", "TF", "OPEN_ENDED"}:
             qids = [t for t in texts if re.fullmatch(r"\d{5,6}", t)]
+
             if qids:
                 rows.append(
                     {

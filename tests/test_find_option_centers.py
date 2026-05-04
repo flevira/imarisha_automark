@@ -4,10 +4,13 @@ Verifies that:
 - MC sections use an 80 px search zone (labels in a compact header row).
 - MATCH sections use a 150 px search zone (labels spread vertically, one per item row).
 - Option C is detected in MATCH sections even when its label falls beyond 80 px.
+- Option C is inferred geometrically (midpoint of B and D) when OCR misses it in MATCH.
+- The geometric fallback is NOT applied to MC sections.
 """
 from __future__ import annotations
 
 import fitz
+import pytest
 
 from core import sections as sections_module
 
@@ -130,3 +133,72 @@ def test_match_ignores_labels_beyond_150px(monkeypatch) -> None:
     assert "B" in centers
     assert "C" not in centers
     assert "D" not in centers
+
+
+# ---------------------------------------------------------------------------
+# MATCH section – geometric fallback when OCR misses the "C" label
+# ---------------------------------------------------------------------------
+
+def test_match_infers_c_from_b_and_d_when_ocr_misses_c(monkeypatch) -> None:
+    """When A, B, D are detected but C is absent, C is inferred as midpoint(B, D)."""
+    section = {"section_type": "MATCH", "y0": 200.0, "y1": 700.0, "x0": 0.0, "x1": 600.0}
+
+    # C label is simply absent from the OCR word list (simulates OCR miss).
+    words = [
+        (50.0, 205.0, 60.0, 220.0, "A"),   # center_x = 55.0
+        (80.0, 230.0, 90.0, 245.0, "B"),   # center_x = 85.0
+        # "C" intentionally omitted
+        (110.0, 255.0, 120.0, 270.0, "D"), # center_x = 115.0
+    ]
+    monkeypatch.setattr(sections_module, "get_page_words", lambda _: words)
+
+    page = _DummyPage()
+    centers = sections_module.find_option_centers(page, section)
+
+    assert "A" in centers
+    assert "B" in centers
+    assert "D" in centers
+    assert "C" in centers, "C must be inferred geometrically when OCR misses it"
+    # Midpoint of B (85.0) and D (115.0) = 100.0
+    assert centers["C"] == pytest.approx(100.0)
+
+
+def test_match_does_not_infer_c_when_only_a_and_b_detected(monkeypatch) -> None:
+    """Fallback requires A, B, AND D — if D is also missing, C is not inferred."""
+    section = {"section_type": "MATCH", "y0": 200.0, "y1": 700.0, "x0": 0.0, "x1": 600.0}
+
+    words = [
+        (50.0, 205.0, 60.0, 220.0, "A"),
+        (80.0, 230.0, 90.0, 245.0, "B"),
+        # C and D both absent
+    ]
+    monkeypatch.setattr(sections_module, "get_page_words", lambda _: words)
+
+    page = _DummyPage()
+    centers = sections_module.find_option_centers(page, section)
+
+    assert "A" in centers
+    assert "B" in centers
+    assert "C" not in centers
+    assert "D" not in centers
+
+
+def test_mc_does_not_apply_match_fallback(monkeypatch) -> None:
+    """The geometric C-fallback must NOT apply to MC sections."""
+    section = {"section_type": "MC", "y0": 100.0, "y1": 500.0, "x0": 0.0, "x1": 600.0}
+
+    # Only A, B, D present in the header row — C is missing.
+    words = [
+        (50.0, 108.0, 60.0, 118.0, "A"),
+        (80.0, 108.0, 90.0, 118.0, "B"),
+        (140.0, 108.0, 150.0, 118.0, "D"),
+    ]
+    monkeypatch.setattr(sections_module, "get_page_words", lambda _: words)
+
+    page = _DummyPage()
+    centers = sections_module.find_option_centers(page, section)
+
+    assert "A" in centers
+    assert "B" in centers
+    assert "D" in centers
+    assert "C" not in centers, "MC sections must not use the MATCH geometric fallback"

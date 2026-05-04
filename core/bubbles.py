@@ -151,7 +151,7 @@ def _is_intentional_multi_mark(
     filled_labels: list[str],
     *,
     similarity_threshold: float = 0.10,
-    dominance_threshold: float = 0.20,
+    dominance_threshold: float = 0.30,
 ) -> bool:
     """Determine whether multiple filled bubbles represent a genuine multi-mark.
 
@@ -164,15 +164,16 @@ def _is_intentional_multi_mark(
     indicating the secondary marks are noise or accidental smudges.
 
     Args:
-        ordered_labels: All option labels for this row (e.g. ["A","B","C","D"]).
+        ordered_labels: All option labels for this row (e.g. [\"A\",\"B\",\"C\",\"D\"]).
         scores: Raw darkness scores keyed by label.
         probabilities: Model confidence probabilities keyed by label.
         filled_labels: Labels the model classified as filled.
         similarity_threshold: Max fractional score gap allowed for marks to be
-            considered "similar" (default 10 %).
+            considered \"similar\" (default 10 %).
         dominance_threshold: Minimum fractional score gap required for one mark
-            to be considered "clearly dominant" (default 20 %).
+            to be considered \"clearly dominant\" (default 30 %).
     """
+
     if len(filled_labels) <= 1:
         return False  # Not a multi-mark situation
 
@@ -258,6 +259,22 @@ def extract_row_answers(
     if not scores:
         return [], True, scores
 
+    # Strict blank detection: treat the row as unanswered when all bubble scores
+    # are uniformly low (student left the question blank).  Two independent
+    # criteria are checked on the raw (pre-calibration) scores:
+    #   1. Every score is below an absolute low-mark threshold (30).
+    #   2. The spread across all options is tiny (< 5 pts) AND the maximum is
+    #      below a weak-signal ceiling (50) — a flat profile with no standout.
+    # Either condition alone is sufficient to declare the row blank.
+    _raw_score_vals = [scores[lbl] for lbl in ordered_labels if lbl in scores]
+    if _raw_score_vals:
+        _raw_max = max(_raw_score_vals)
+        _raw_spread = _raw_max - min(_raw_score_vals)
+        _all_below_floor = _raw_max < 30.0
+        _flat_and_weak = _raw_spread < 5.0 and _raw_max < 50.0
+        if _all_below_floor or _flat_and_weak:
+            return [], False, {f"score_{k}": v for k, v in scores.items()}
+
     # Row-local calibration pass: use likely empty bubbles as local baseline.
     ordered_score_vals = np.array([scores[label] for label in ordered_labels if label in scores], dtype=np.float32)
     baseline = float(np.percentile(ordered_score_vals, 35)) if ordered_score_vals.size else 0.0
@@ -298,8 +315,26 @@ def extract_row_answers(
             dom_prob = probabilities.get(dominant_label, 0.0)
             model_review = 0.45 <= dom_prob <= 0.65
         else:
-            # Genuinely ambiguous multi-mark — flag for human review.
-            model_review = True
+            # Even when scores look similar, enforce a single answer for MC
+            # unless the top two probabilities are within 5% of each other
+            # (truly indistinguishable).  This prevents the adaptive threshold
+            # from exporting both A and B when both happen to exceed the cutoff.
+            ranked_filled = sorted(
+                filled_labels,
+                key=lambda lbl: probabilities.get(lbl, 0.0),
+                reverse=True,
+            )
+            top_prob_f = probabilities.get(ranked_filled[0], 0.0)
+            second_prob_f = probabilities.get(ranked_filled[1], 0.0) if len(ranked_filled) > 1 else 0.0
+            if (top_prob_f - second_prob_f) >= 0.05:
+                # Clear enough winner — keep only the top answer.
+                filled_labels = [ranked_filled[0]]
+                dom_prob = top_prob_f
+                model_review = 0.45 <= dom_prob <= 0.65
+            else:
+                # Genuinely ambiguous multi-mark — flag for human review.
+                model_review = True
+
 
     needs_review = model_review
     if section["section_type"] == "TF" and len(filled_labels) != 1:

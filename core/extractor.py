@@ -356,6 +356,165 @@ def _order_quad_points(quad: np.ndarray) -> np.ndarray:
     return ordered
 
 
+
+
+def _detect_corner_marker_candidates(binary_inv: np.ndarray, original_gray: np.ndarray) -> list[dict[str, Any]]:
+    h, w = binary_inv.shape[:2]
+    img_area = float(h * w)
+    contours, _ = cv2.findContours(binary_inv, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
+    candidates: list[dict[str, Any]] = []
+
+    for contour in contours:
+        area = cv2.contourArea(contour)
+        if area < (img_area * 0.0002) or area > (img_area * 0.03):
+            continue
+
+        perimeter = cv2.arcLength(contour, True)
+        if perimeter <= 1e-6:
+            continue
+        approx = cv2.approxPolyDP(contour, 0.04 * perimeter, True)
+        if len(approx) != 4 or not cv2.isContourConvex(approx):
+            continue
+
+        x, y, bw, bh = cv2.boundingRect(approx)
+        if bw <= 0 or bh <= 0:
+            continue
+        aspect = bw / float(bh)
+        if not (0.7 <= aspect <= 1.3):
+            continue
+
+        hull = cv2.convexHull(approx)
+        hull_area = cv2.contourArea(hull)
+        solidity = area / hull_area if hull_area > 1e-6 else 0.0
+        if solidity < 0.8:
+            continue
+
+        mask = np.zeros_like(binary_inv)
+        cv2.drawContours(mask, [approx], -1, 255, thickness=-1)
+        mean_inside = float(cv2.mean(original_gray, mask=mask)[0])
+        darkness_score = (255.0 - mean_inside) / 255.0
+
+        shape_score = max(0.0, 1.0 - abs(1.0 - aspect))
+        score = (shape_score * 0.45) + (solidity * 0.35) + (darkness_score * 0.20)
+        candidates.append(
+            {
+                "quad": approx.astype(np.float32),
+                "center": np.array([x + (bw / 2.0), y + (bh / 2.0)], dtype=np.float32),
+                "bbox": (x, y, bw, bh),
+                "score": float(score),
+                "shape_score": float(shape_score),
+                "solidity": float(solidity),
+                "darkness": float(darkness_score),
+            }
+        )
+
+    return candidates
+
+
+def _align_scanned_page_with_markers_internal(
+    img_bgr: np.ndarray,
+) -> tuple[np.ndarray, bool, dict[str, Any]]:
+    h, w = img_bgr.shape[:2]
+    diagnostics: dict[str, Any] = {
+        "markers_found": 0,
+        "confidence": 0.0,
+        "fallback_used": True,
+        "reason": "initial",
+    }
+    if h <= 20 or w <= 20:
+        diagnostics["reason"] = "image_too_small"
+        return img_bgr, False, diagnostics
+
+    gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
+    blur = cv2.GaussianBlur(gray, (5, 5), 0)
+    binary = cv2.adaptiveThreshold(
+        blur,
+        255,
+        cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+        cv2.THRESH_BINARY,
+        31,
+        8,
+    )
+    binary_inv = cv2.bitwise_not(binary)
+    kernel = np.ones((3, 3), dtype=np.uint8)
+    binary_inv = cv2.morphologyEx(binary_inv, cv2.MORPH_OPEN, kernel, iterations=1)
+    binary_inv = cv2.morphologyEx(binary_inv, cv2.MORPH_CLOSE, kernel, iterations=1)
+
+    candidates = _detect_corner_marker_candidates(binary_inv, gray)
+    diagnostics["candidate_count"] = len(candidates)
+    if not candidates:
+        diagnostics["reason"] = "no_candidates"
+        return img_bgr, False, diagnostics
+
+    corners: dict[str, np.ndarray] = {
+        "tl": np.array([0.0, 0.0], dtype=np.float32),
+        "tr": np.array([float(w - 1), 0.0], dtype=np.float32),
+        "br": np.array([float(w - 1), float(h - 1)], dtype=np.float32),
+        "bl": np.array([0.0, float(h - 1)], dtype=np.float32),
+    }
+
+    diag_len = float(np.hypot(w, h))
+    chosen: dict[str, dict[str, Any]] = {}
+    for key, corner_pt in corners.items():
+        best_item: dict[str, Any] | None = None
+        best_rank = -1e9
+        for c in candidates:
+            dist = float(np.linalg.norm(c["center"] - corner_pt))
+            dist_score = 1.0 - min(1.0, dist / max(1.0, diag_len * 0.45))
+            rank = (0.65 * c["score"]) + (0.35 * dist_score)
+            if rank > best_rank:
+                best_rank = rank
+                best_item = {**c, "rank": rank, "dist_to_corner": dist}
+        if best_item is None:
+            diagnostics["reason"] = f"missing_{key}"
+            return img_bgr, False, diagnostics
+        chosen[key] = best_item
+
+    unique_centers = {tuple(np.round(item["center"], 1)) for item in chosen.values()}
+    if len(unique_centers) < 4:
+        diagnostics["reason"] = "ambiguous_corner_assignment"
+        return img_bgr, False, diagnostics
+
+    src = np.array([chosen["tl"]["center"], chosen["tr"]["center"], chosen["br"]["center"], chosen["bl"]["center"]], dtype=np.float32)
+    dst = np.array(
+        [[0.0, 0.0], [float(w - 1), 0.0], [float(w - 1), float(h - 1)], [0.0, float(h - 1)]],
+        dtype=np.float32,
+    )
+
+    matrix = cv2.getPerspectiveTransform(src, dst)
+    aligned = cv2.warpPerspective(
+        img_bgr,
+        matrix,
+        (w, h),
+        flags=cv2.INTER_CUBIC,
+        borderMode=cv2.BORDER_CONSTANT,
+        borderValue=(255, 255, 255),
+    )
+    confidence = float(np.mean([item["rank"] for item in chosen.values()]))
+    diagnostics.update(
+        {
+            "markers_found": 4,
+            "confidence": confidence,
+            "fallback_used": False,
+            "reason": "ok",
+            "selected": {
+                key: {
+                    "center": [float(v) for v in val["center"]],
+                    "rank": float(val["rank"]),
+                    "shape_score": float(val["shape_score"]),
+                    "solidity": float(val["solidity"]),
+                    "darkness": float(val["darkness"]),
+                }
+                for key, val in chosen.items()
+            },
+        }
+    )
+    return aligned, True, diagnostics
+
+
+def align_scanned_page_with_markers(img_bgr: np.ndarray) -> np.ndarray:
+    aligned, _, _ = _align_scanned_page_with_markers_internal(img_bgr)
+    return aligned
 def align_scanned_page_to_template(img_bgr: np.ndarray) -> np.ndarray:
     h, w = img_bgr.shape[:2]
     if h <= 20 or w <= 20:
@@ -1710,7 +1869,18 @@ def extract_file_with_report(
             use_text_layer = False
         if not use_text_layer:
             img_raw_bgr = normalize_scanned_page_rotation(img_raw_bgr)
-            img_raw_bgr = align_scanned_page_to_template(img_raw_bgr)
+            marker_aligned, marker_ok, marker_diag = _align_scanned_page_with_markers_internal(img_raw_bgr)
+            if marker_ok:
+                img_raw_bgr = marker_aligned
+            else:
+                img_raw_bgr = align_scanned_page_to_template(img_raw_bgr)
+            print(
+                f"[extractor] page {page_number}: marker alignment "
+                f"markers={marker_diag.get('markers_found', 0)}, "
+                f"candidates={marker_diag.get('candidate_count', 0)}, "
+                f"confidence={marker_diag.get('confidence', 0.0):.3f}, "
+                f"fallback_used={not marker_ok}, reason={marker_diag.get('reason')}"
+            )
             img_bgr = preprocess_scanned_for_omr(img_raw_bgr)
         quality_metrics = _compute_scan_quality_metrics(
             img_bgr=img_raw_bgr,
@@ -1739,7 +1909,18 @@ def extract_file_with_report(
         # text-layer mode, use a normalized/aligned scan view for ID detection.
         if use_text_layer:
             id_raw_bgr = normalize_scanned_page_rotation(rendered_raw_bgr)
-            id_raw_bgr = align_scanned_page_to_template(id_raw_bgr)
+            id_marker_aligned, id_marker_ok, id_marker_diag = _align_scanned_page_with_markers_internal(id_raw_bgr)
+            if id_marker_ok:
+                id_raw_bgr = id_marker_aligned
+            else:
+                id_raw_bgr = align_scanned_page_to_template(id_raw_bgr)
+            print(
+                f"[extractor] page {page_number}: id marker alignment "
+                f"markers={id_marker_diag.get('markers_found', 0)}, "
+                f"candidates={id_marker_diag.get('candidate_count', 0)}, "
+                f"confidence={id_marker_diag.get('confidence', 0.0):.3f}, "
+                f"fallback_used={not id_marker_ok}, reason={id_marker_diag.get('reason')}"
+            )
             id_bgr = preprocess_scanned_for_omr(id_raw_bgr)
         else:
             id_raw_bgr = img_raw_bgr

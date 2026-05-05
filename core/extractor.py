@@ -30,6 +30,9 @@ OCR_OVERLAY_CENTER_DISTANCE_RATIO = 0.65
 OCR_OVERLAY_MIN_CONF = 40.0
 OCR_OVERLAY_MIN_CONF_SINGLE_CHAR = 65.0
 
+CANONICAL_WARP_WIDTH = 2480
+CANONICAL_WARP_HEIGHT = 3508
+
 _OCR_OVERLAY_CACHE: dict[str, bytes] = {}
 
 
@@ -511,6 +514,15 @@ def _align_scanned_page_with_markers_internal(
     )
     return aligned, True, diagnostics
 
+
+
+
+def _resize_to_canonical_warp(img_bgr: np.ndarray) -> np.ndarray:
+    return cv2.resize(
+        img_bgr,
+        (CANONICAL_WARP_WIDTH, CANONICAL_WARP_HEIGHT),
+        interpolation=cv2.INTER_CUBIC,
+    )
 
 def align_scanned_page_with_markers(img_bgr: np.ndarray) -> np.ndarray:
     aligned, _, _ = _align_scanned_page_with_markers_internal(img_bgr)
@@ -1867,19 +1879,28 @@ def extract_file_with_report(
             # often unreliable when the underlying scan is skewed, so force scanned
             # mode so deskew/alignment can be applied consistently.
             use_text_layer = False
+        marker_mode = "unavailable"
+        marker_output_dims = None
         if not use_text_layer:
             img_raw_bgr = normalize_scanned_page_rotation(img_raw_bgr)
             marker_aligned, marker_ok, marker_diag = _align_scanned_page_with_markers_internal(img_raw_bgr)
             if marker_ok:
-                img_raw_bgr = marker_aligned
+                img_raw_bgr = _resize_to_canonical_warp(marker_aligned)
+                marker_mode = "marker_canonical"
+                marker_output_dims = {
+                    "width": CANONICAL_WARP_WIDTH,
+                    "height": CANONICAL_WARP_HEIGHT,
+                }
             else:
                 img_raw_bgr = align_scanned_page_to_template(img_raw_bgr)
+                marker_mode = "template_fallback"
             print(
                 f"[extractor] page {page_number}: marker alignment "
                 f"markers={marker_diag.get('markers_found', 0)}, "
                 f"candidates={marker_diag.get('candidate_count', 0)}, "
                 f"confidence={marker_diag.get('confidence', 0.0):.3f}, "
-                f"fallback_used={not marker_ok}, reason={marker_diag.get('reason')}"
+                f"fallback_used={not marker_ok}, reason={marker_diag.get('reason')}, "
+                f"mode={marker_mode}, dims={img_raw_bgr.shape[1]}x{img_raw_bgr.shape[0]}"
             )
             img_bgr = preprocess_scanned_for_omr(img_raw_bgr)
         quality_metrics = _compute_scan_quality_metrics(
@@ -1911,7 +1932,7 @@ def extract_file_with_report(
             id_raw_bgr = normalize_scanned_page_rotation(rendered_raw_bgr)
             id_marker_aligned, id_marker_ok, id_marker_diag = _align_scanned_page_with_markers_internal(id_raw_bgr)
             if id_marker_ok:
-                id_raw_bgr = id_marker_aligned
+                id_raw_bgr = _resize_to_canonical_warp(id_marker_aligned)
             else:
                 id_raw_bgr = align_scanned_page_to_template(id_raw_bgr)
             print(
@@ -1919,7 +1940,9 @@ def extract_file_with_report(
                 f"markers={id_marker_diag.get('markers_found', 0)}, "
                 f"candidates={id_marker_diag.get('candidate_count', 0)}, "
                 f"confidence={id_marker_diag.get('confidence', 0.0):.3f}, "
-                f"fallback_used={not id_marker_ok}, reason={id_marker_diag.get('reason')}"
+                f"fallback_used={not id_marker_ok}, reason={id_marker_diag.get('reason')}, "
+                f"mode={'marker_canonical' if id_marker_ok else 'template_fallback'}, "
+                f"dims={id_raw_bgr.shape[1]}x{id_raw_bgr.shape[0]}"
             )
             id_bgr = preprocess_scanned_for_omr(id_raw_bgr)
         else:
@@ -1979,6 +2002,10 @@ def extract_file_with_report(
             "scan_heading_candidates": list(scan_section_debug.get("heading_candidates", [])),
             "scan_heading_guard_warning": None,
             "section_debug": [],
+            "marker_mode": marker_mode if not use_text_layer else ("text_layer_id_marker"),
+            "marker_output_width": int(img_raw_bgr.shape[1]),
+            "marker_output_height": int(img_raw_bgr.shape[0]),
+            "marker_output_dims": marker_output_dims,
         }
         if not use_text_layer:
             left_count = page_report["scan_headings_left"]

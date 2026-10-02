@@ -1,57 +1,16 @@
-"""Account-scoped offline cache and read-only teacher manifest HTTP client."""
+"""Local manifest cache and explicit file import."""
 from __future__ import annotations
 
 import hashlib
-import ipaddress
 import json
 import os
 from pathlib import Path
 import sqlite3
 from typing import Callable
-from urllib.error import HTTPError, URLError
-from urllib.parse import quote, urlsplit
-from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from core.manifest_layout import PreparationError, require, validate_manifest
 
 MAX_MANIFEST_BYTES = 1_000_000
-
-
-class _NoRedirect(HTTPRedirectHandler):
-    def redirect_request(self, req, fp, code, msg, headers, newurl):
-        return None  # Never forward a teacher token to a redirect destination.
-
-
-class TeacherManifestClient:
-    def __init__(self, base_url: str, token: str, timeout: float = 10):
-        parsed = urlsplit(base_url)
-        loopback = parsed.hostname == "localhost"
-        try:
-            loopback = loopback or ipaddress.ip_address(parsed.hostname or "").is_loopback
-        except ValueError:
-            pass
-        require(parsed.scheme == "https" or (parsed.scheme == "http" and loopback), "Use HTTPS, or HTTP only for a loopback development backend", "invalid-backend")
-        require(bool(parsed.hostname) and not parsed.username and not parsed.password and not parsed.query and not parsed.fragment
-                and parsed.path in ("", "/"), "Backend must be an origin URL", "invalid-backend")
-        require(bool(token.strip()) and "\n" not in token and "\r" not in token, "A teacher token is required", "authentication-required")
-        self.base_url, self.token, self.timeout = base_url.rstrip("/"), token, timeout
-
-    def __call__(self, layout_id: str, assessment_type: str, assessment_id: str) -> dict:
-        endpoint = "/api/teacher/pdf-exports/layouts/" + "/".join(quote(v, safe="") for v in (assessment_type, assessment_id, layout_id))
-        request = Request(self.base_url + endpoint, headers={"Authorization": "Bearer " + self.token, "Accept": "application/json"})
-        try:
-            with build_opener(_NoRedirect()).open(request, timeout=self.timeout) as response:
-                data = response.read(MAX_MANIFEST_BYTES + 1)
-        except HTTPError as exc:
-            code = {401: "authentication-required", 403: "access-denied", 404: "layout-unavailable"}.get(exc.code, "backend-error")
-            raise PreparationError(code, f"Manifest request returned HTTP {exc.code}") from None
-        except (URLError, TimeoutError, OSError):
-            raise PreparationError("backend-unavailable", "Cannot reach the configured manifest backend") from None
-        require(len(data) <= MAX_MANIFEST_BYTES, "Manifest response too large")
-        try:
-            return validate_manifest(json.loads(data))
-        except (UnicodeError, json.JSONDecodeError):
-            raise PreparationError("invalid-manifest", "Backend returned invalid JSON") from None
 
 
 class CachedManifestResolver:
@@ -111,3 +70,33 @@ class CachedManifestResolver:
         # Backend authenticates this exact requested reference, including historical aliases.
         self._save(layout_id, assessment_type, assessment_id, manifest)
         return manifest
+
+
+class ImportedManifestResolver:
+    """Explicit local imports only. Never makes a network request."""
+    def __init__(self, cache_path, job_scope=None):
+        self.cache=CachedManifestResolver(cache_path,'imported-manifests-v1')
+        self.scope=job_scope or self.cache.scope
+
+    def import_file(self, path):
+        with Path(path).open('rb') as stream:
+            data=stream.read(MAX_MANIFEST_BYTES+1)
+        require(len(data)<=MAX_MANIFEST_BYTES,'Manifest file too large')
+        try:
+            document=json.loads(data)
+        except (ValueError,UnicodeError):
+            raise PreparationError('invalid-manifest','Choose a valid manifest JSON file') from None
+        if isinstance(document,dict) and document.get('format')=='imarisha-automark-manifest':
+            require(document.get('packageVersion')==1,'Unsupported manifest package version')
+            document=document.get('manifest')
+        manifest=validate_manifest(document)
+        require(manifest.get('answerSchemaVersion')==1 and bool(manifest.get('questions')),
+                'Manifest must include question answers for marking')
+        self.cache._save(manifest['layoutId'],manifest['assessmentType'],manifest['assessmentId'],manifest)
+        return manifest
+
+    def resolve(self, layout_id, assessment_type, assessment_id):
+        saved=self.cache._read(layout_id,assessment_type,assessment_id)
+        if saved is None:
+            raise PreparationError('layout-unavailable','Import the manifest downloaded with this answer sheet, then retry failed pages.')
+        return saved

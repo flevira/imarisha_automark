@@ -68,7 +68,8 @@ def run_job(repository, job, resolver, cancel=None, progress=None, retry_failed=
                         prepared=prepare_image(image,'sha256:'+info['digest'],number,resolver)
                         prep_seconds=time.perf_counter()-start
                         if prepared.status!='prepared':
-                            repository.save_page(job,number,'failed',prepared.reason,image_png,{},prep_seconds,0)
+                            repository.save_page(job,number,'failed',prepared.reason,image_png,
+                                                 {'preparation_message':prepared.message},prep_seconds,0)
                         else:
                             page=prepared.page
                             extraction_start=time.perf_counter()

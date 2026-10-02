@@ -18,6 +18,9 @@ class JobRepository:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.connect() as db:
             db.executescript('''
+            CREATE TABLE IF NOT EXISTS structured_marking_runs(
+              sequence INTEGER PRIMARY KEY AUTOINCREMENT, job TEXT NOT NULL,
+              result TEXT NOT NULL, created TEXT DEFAULT CURRENT_TIMESTAMP);
             CREATE TABLE IF NOT EXISTS structured_transcriptions(
               sequence INTEGER PRIMARY KEY AUTOINCREMENT, job TEXT NOT NULL, response TEXT NOT NULL,
               result TEXT NOT NULL, language TEXT NOT NULL, created TEXT DEFAULT CURRENT_TIMESTAMP);
@@ -170,6 +173,17 @@ class JobRepository:
             db.execute('INSERT INTO structured_transcriptions(job,response,result,language) VALUES (?,?,?,?)',
                        (job,response_id,json.dumps(asdict(result)),language))
 
+    def save_marking_run(self, job, result):
+        """Caller holds the job lock; runs are append-only and never extraction data."""
+        with self.connect() as db:
+            return db.execute('INSERT INTO structured_marking_runs(job,result) VALUES (?,?)',
+                              (job,json.dumps(result,allow_nan=False))).lastrowid
+
+    def marking_runs(self, job):
+        with self.connect() as db:
+            return [dict(sequence=r['sequence'],created=r['created'],**json.loads(r['result']))
+                    for r in db.execute('SELECT * FROM structured_marking_runs WHERE job=? ORDER BY sequence DESC',(job,))]
+
     def crop(self, job, ref):
         with self.connect() as db:
             return db.execute('SELECT data FROM structured_crops WHERE job=? AND ref=?',(job,ref)).fetchone()[0]
@@ -214,13 +228,50 @@ class JobRepository:
                     raise ValueError('Choose only listed options, without duplicates')
                 if row['selection_mode']=='single' and len(selected)>1:
                     raise ValueError('This row permits at most one answer; blank must be explicit')
-            raw = ExtractedResponse.from_json(row['raw'])
-            changed = student != raw.student_id or tuple(selected) != raw.selected_options or (row['selection_mode']=='text' and raw_text!=(raw.raw_text or ''))
-            if (changed or action=='exclude' or raw.needs_review) and not note.strip():
-                raise ValueError('Explain corrections, exclusions and resolution of review flags')
             db.execute('INSERT INTO structured_reviews(job,response,action,student,selected,reviewer,note,raw_text) VALUES (?,?,?,?,?,?,?,?)',
                 (job,response_id,action,student,json.dumps(selected),reviewer.strip(),note.strip(),raw_text))
             db.execute("UPDATE structured_jobs SET status='review' WHERE id=?",(job,))
+
+    def approve_all(self, job, reviewer):
+        """Approve saved values across the job, preserving prior teacher decisions.
+
+        Missing/unreadable responses are not silently turned into blanks. One
+        transaction records the batch; original extraction and drafts are retained.
+        """
+        if not (reviewer or '').strip():
+            raise ValueError('Enter Reviewer name before approving all responses')
+        with self.lock(job):
+            info=self.job(job)
+            if info['status'] not in ('review','complete'):
+                raise ValueError('Finish extraction before approving responses')
+            metadata={p['number']:json.loads(p['metadata'] or '{}') for p in info['pages']}
+            pending=[];skipped=[];retained=0
+            for row in self.responses(job):
+                if row['review']:
+                    retained+=1;continue
+                raw=row['response'];student=raw.student_id;selected=list(raw.selected_options);text=None
+                reason=None
+                digits=metadata[row['page']].get('identity_digit_count')
+                if not student or not student.isascii() or not student.isdigit() or (digits and len(student)!=digits):
+                    reason='student identity needs review'
+                elif row['selection_mode']=='text':
+                    draft=row['transcription']
+                    text=(draft.get('text') if draft and draft.get('status')!='error' else None) or raw.raw_text
+                    if not text and raw.status.value!='blank':reason='written answer needs transcription'
+                    text=text or ''
+                    if len(text)>20000:reason='written answer is too long'
+                elif (not set(selected)<=set(row['options']) or
+                      (row['selection_mode']=='single' and len(selected)>1) or
+                      (not selected and raw.status.value!='blank')):
+                    reason='selection needs review'
+                if reason:
+                    skipped.append(dict(page=row['page'],question=raw.display_number,reason=reason));continue
+                pending.append((job,row['id'],'approve',student,json.dumps(selected),reviewer.strip(),
+                                'Bulk approval of saved responses',text))
+            with self.connect() as db:
+                db.executemany('INSERT INTO structured_reviews(job,response,action,student,selected,reviewer,note,raw_text) VALUES (?,?,?,?,?,?,?,?)',pending)
+                if pending:db.execute("UPDATE structured_jobs SET status='review' WHERE id=?",(job,))
+            return dict(approved=len(pending),retained=retained,skipped=skipped)
 
     def set_issues(self, job, issues):
         with self.connect() as db:
@@ -250,8 +301,13 @@ class JobRepository:
                 raise ValueError('Resume the job to finish its document checks first')
             if any(p['status']=='pending' for p in self.job(job)['pages']):
                 raise ValueError('Resume unfinished pages first')
-            if any(r['review'] is None for r in self.responses(job)) or any(i['resolution'] is None for i in self.issues(job)):
-                raise ValueError('Review every response and resolve every document issue first')
+            unreviewed = [r for r in self.responses(job) if r['review'] is None]
+            unresolved = [i for i in self.issues(job) if i['resolution'] is None]
+            if unreviewed or unresolved:
+                pages = ', '.join(str(p) for p in sorted({r['page'] for r in unreviewed}))
+                raise ValueError(f'Review not complete: {len(unreviewed)} responses still need approval or exclusion'
+                                 + (f' on pages {pages}' if pages else '')
+                                 + f'; {len(unresolved)} document issues need resolution. Use Review page to check the remaining responses.')
             identities, seen = {}, set()
             for row in self.responses(job):
                 decision, raw = row['review'], row['response']

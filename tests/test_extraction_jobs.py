@@ -110,8 +110,8 @@ def test_correction_is_append_only_and_approval_survives_reopen(repository,fixtu
         assert db.execute('SELECT COUNT(*) FROM structured_reviews').fetchone()[0]==2
 
 
-@pytest.mark.parametrize('change', [dict(selected=['Z']),dict(selected=['true','false']),dict(student='530'),dict(reviewer=''),dict(student='00531')])
-def test_invalid_or_unexplained_correction_is_rejected(repository,fixture_dir,resolver,change):
+@pytest.mark.parametrize('change', [dict(selected=['Z']),dict(selected=['true','false']),dict(student='530'),dict(reviewer='')])
+def test_invalid_correction_is_rejected(repository,fixture_dir,resolver,change):
     job=create(repository,fixture_dir,resolver,'shared-tf-text');run_job(repository,job,resolver)
     with pytest.raises(ValueError):approve(repository,job,repository.responses(job)[0],**change)
     assert repository.responses(job)[0]['review'] is None
@@ -172,7 +172,7 @@ def test_duplicate_pages_cannot_be_completed_with_duplicate_approvals(repository
     assert len(repository.responses(job))==2
 
 
-def test_uncertain_original_cannot_silently_become_blank(repository,fixture_dir,resolver,monkeypatch):
+def test_bulk_keeps_uncertain_blank_for_explicit_individual_review(repository,fixture_dir,resolver,monkeypatch):
     from dataclasses import replace
     from core.contracts import ReadStatus
     import services.extraction_jobs as service
@@ -184,8 +184,10 @@ def test_uncertain_original_cannot_silently_become_blank(repository,fixture_dir,
     monkeypatch.setattr(service.StructuredExtractor,'extract_page',uncertain)
     job=create(repository,fixture_dir,resolver,'shared-tf-text');run_job(repository,job,resolver)
     row=repository.responses(job)[0]
-    with pytest.raises(ValueError):approve(repository,job,row,selected=[])
-    approve(repository,job,row,selected=[],note='Teacher explicitly confirmed no valid response')
+    result=repository.approve_all(job,'Teacher')
+    assert result['skipped']
+    assert repository.responses(job)[0]['review'] is None
+    approve(repository,job,row,selected=[])
     saved=repository.responses(job)[0]
     assert saved['response'].status==ReadStatus.UNCERTAIN
     assert saved['response'].selected_options==('true','false')

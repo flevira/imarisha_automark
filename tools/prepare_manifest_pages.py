@@ -3,9 +3,7 @@
 Offline demonstration:
 python -m tools.prepare_manifest_pages artifacts/m1-fixtures/personalized-mixed-scan.pdf --fixture-manifests tests/fixtures/manifest --output artifacts/m2-demo
 
-Live backend: omit --fixture-manifests, pass --backend URL --account STAFF_ID.
-Set AUTOMARK_API_TOKEN in the environment for online cache misses (never on CLI).
-Use --refresh to reauthorize even cached entries; omit the token for offline use.
+Import a downloaded manifest with --manifest PATH. Subsequent runs use the local cache; no backend connection is used.
 """
 import argparse
 from dataclasses import asdict
@@ -19,7 +17,7 @@ import numpy as np
 
 from core.manifest_layout import PreparationError
 from core.page_alignment import normalized_preview
-from services.manifest_resolver import CachedManifestResolver, TeacherManifestClient
+from services.manifest_resolver import CachedManifestResolver, ImportedManifestResolver
 from services.page_preparation import prepare_document
 from services.structured_extraction import extract_prepared_document
 
@@ -38,29 +36,22 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("document", type=Path)
     parser.add_argument("--fixture-manifests", type=Path)
-    parser.add_argument("--backend")
-    parser.add_argument("--account")
+    parser.add_argument('--manifest',type=Path,help='Import a downloaded manifest JSON')
     parser.add_argument("--cache", type=Path)
-    parser.add_argument("--refresh", action="store_true")
     parser.add_argument("--output", type=Path, default=Path("artifacts/m2-preparation"))
     parser.add_argument("--previews", action="store_true")
     parser.add_argument("--extract", action="store_true", help="Read structured bubbles and student grids after preparation")
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
     if args.fixture_manifests:
-        if args.backend or args.account or args.refresh:
-            parser.error("Fixture mode is separate from authenticated production caches")
         resolver = CachedManifestResolver(args.cache or args.output/"fixture-cache.db", "synthetic-fixtures-only")
         for file in args.fixture_manifests.glob("*.json"):
             manifest = json.loads(file.read_text())
             if isinstance(manifest, dict) and "layoutId" in manifest and "pages" in manifest:
                 resolver.seed_fixture(manifest)
     else:
-        if not args.backend or not args.account:
-            parser.error("Provide --backend and --account, or use --fixture-manifests for a synthetic demo")
-        token = os.environ.get("AUTOMARK_API_TOKEN")
-        client = TeacherManifestClient(args.backend, token) if token else None
-        resolver = CachedManifestResolver(args.cache or cache_location(), args.backend.rstrip("/")+"|"+args.account, client, refresh=args.refresh)
+        resolver=ImportedManifestResolver(args.cache or cache_location())
+        if args.manifest:resolver.import_file(args.manifest)
     result = prepare_document(args.document, resolver)
     (args.output/"preparation.json").write_text(json.dumps(result.summary(), indent=2)+"\n")
     extracted = None

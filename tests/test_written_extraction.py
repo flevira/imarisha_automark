@@ -155,3 +155,15 @@ def test_review_screen_allows_manual_written_transcription(setup):
     row=next(r for r in repo.responses(job) if r['response'].question_id=='4')
     assert row['review']['raw_text']=='12' and row['response'].raw_text is None
     for control in page.controls:assert control._build_add_commands()
+
+
+def test_bulk_approval_does_not_turn_untranscribed_handwriting_into_blank(setup):
+    _,_,_,repo=setup
+    job,rows=read(setup,'answers.pdf')
+    result=repo.approve_all(job,'Teacher')
+    assert any(r['question']==4 and 'transcription' in r['reason'] for r in result['skipped'])
+    row=next(r for r in repo.responses(job) if r['response'].question_id=='4')
+    assert row['review'] is None
+    # Individual transcription approval no longer requires a comment.
+    repo.review(job,row['id'],action='approve',student='00530',selected=[],reviewer='Teacher',raw_text='12')
+    assert next(r for r in repo.responses(job) if r['id']==row['id'])['review']['raw_text']=='12'

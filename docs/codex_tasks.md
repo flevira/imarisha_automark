@@ -72,7 +72,7 @@ The extraction benchmark target is **100 students × 10 short answers within ten
 
 ### Independently testable implementation milestones
 
-**M1–M5 are implemented locally. M6's opt-in trial implementation is available, but real-handwriting qualification and model selection remain pending.** Successful lookup with a real teacher account and a full native desktop user run remain unverified. M7–M9 remain **planned**. Six existing legacy-test failures remain visible rather than declaring the whole application green. Independent means each has a bounded deliverable and can be tested with fixtures or a fake dependency; it does not mean every milestone can be integrated before its prerequisites exist. Complete and validate one milestone at a time. Do not replace the working legacy extractor while introducing the manifest-driven path.
+**M1–M5 are implemented locally. M6's opt-in trial implementation is available, but real-handwriting qualification and model selection remain pending. M8's separate deterministic marking workflow is implemented locally.** The user requested proceeding to marking independently of M7 throughput qualification, which remains pending. Successful lookup with a real teacher account and a full native desktop user run remain unverified. M9 has a local assistance trial; real-answer accuracy and review-rate qualification remain pending. Six existing legacy-test failures remain visible rather than declaring the whole application green. Independent means each has a bounded deliverable and can be tested with fixtures or a fake dependency; it does not mean every milestone can be integrated before its prerequisites exist. Do not replace the working legacy extractor while introducing the manifest-driven path.
 
 Use small synthetic fixtures for automated tests. Keep real student scans, local databases, model files and virtual environments out of commits. Each milestone closes with its focused test results, documented limitations and a runnable demonstration of its deliverable in this existing document.
 
@@ -334,6 +334,18 @@ Dataset shape: `{"qualification":"real-labeled","cases":[{"image":"english-01.pn
 - **Tests:** accepted/rejected variants, blanks versus unreadable text, exact and multiple selections, matching question totals, numeric/unit rules, absent scoring policy, response correction and repeated marking. Never award the full question allocation independently to each matching sub-item.
 - **Exit:** deterministic scores match a teacher-authored expected-results set; ambiguous cases remain unresolved, and re-marking invokes neither scanning nor recognition. Report marking time separately.
 
+##### M8 implementation record (2026-10-02)
+
+- **Boundary:** `core/marking.py` scores whole questions from saved approved responses and the existing layout's answer fields. `services/marking_jobs.py` resolves that layout in the original account scope, verifies its identity/geometry, and groups matching items and written continuations. It never reads a PDF, crop, handwriting draft or recognizer. Extraction review must be complete first.
+- **Scoring policy:** existing backend manifests say `ASSESSMENT_POLICY_REQUIRED`. This placeholder does not authorize a scoring rule. Desktop marking defaults to manifest rules; the teacher can explicitly choose all-or-nothing per structured question, including the entire matching question. Multiple-answer selections must equal the complete correct set. Matching equivalent option IDs are accepted, but the question's maximum is awarded once. No partial-credit policy is inferred. Missing/invalid answers, conflicting marks, unsupported policies and absent/excluded question parts remain unresolved, never implicit zeros.
+- **Written answers:** the teacher may explicitly enable case-insensitive, whitespace-normalized comparison to reference answers/accepted alternatives. Unlisted wording remains unresolved unless an explicit rule declares the list exhaustive (`rejectUnlisted: true`). NFC Unicode normalization is used; spelling, punctuation and meaning are not guessed. Numeric comparison requires explicit absolute tolerance and a literal unit. No unit conversion or semantic/AI grading occurs. Blank approved text scores zero only after a valid key and rule have been established; unapproved handwriting cannot be marked. Continuation parts are combined in manifest order and receive one question allocation.
+- **Persistence:** the local jobs database adds only `structured_marking_runs`, through idempotent initialization. Each append-only run stores the original response snapshot, review sequences, raw revisions, exact manifest documents and SHA-256 digests, layout versions, teacher/rules, question results and student totals. Re-marking adds a run without modifying extraction or earlier scores. Corrections invalidate the displayed previous result until review is completed and marking rerun. Students with unresolved questions have no final total; the resolved subtotal is explicitly labeled. Excluded-only students have no score. Acknowledged document issues remain in the run audit.
+- **Desktop:** complete review, select an explicit policy if needed, then use **Mark / re-mark reviewed answers**. The UI shows question scores/review reasons, totals, history IDs and marking duration. Written normalization is opt-in. Detailed per-question numeric or text rules can be supplied in a manifest's `questions[].scoringRules`, or with the CLI's teacher policy file. This stage does not add a manual-score editor, upload results to Imarisha, modify backend records, restart services or activate the desktop app.
+- **CLI:** `python -m tools.marking_jobs --job JOB --reviewer 'Teacher' --backend http://127.0.0.1:18080 --account STAFF --structured-policy all-or-nothing`. Use the same database/account as extraction. Previously authorized cached layouts work offline; `AUTOMARK_API_TOKEN` is needed only for uncached lookup. `--fixture-manifests tests/fixtures/manifest` isolates synthetic runs. Omit `--structured-policy` to require manifest rules. `--policy rules.json` supplies explicit teacher rules and is mutually exclusive with the preset.
+- **Rule contract:** teacher policy JSON is `{"version":1,"structured":"all-or-nothing","written":{"QUESTION_ID":{"version":1,"mode":"numeric","tolerance":"0.1","unit":"cm"}}}`. Text rules use `{"version":1,"mode":"text-exact","caseSensitive":false,"collapseWhitespace":true}`; `writtenDefault` optionally applies a text rule to written questions without a per-question override. Per-question manifest rules take precedence over teacher presets. Numeric reference answers must include the specified unit; an unrecognized numeric format/unit requires review.
+- **Validation:** 22 new marking tests cover explicit keys and expected scores, set comparison, matching alternatives/totals, absent policies, invalid keys, blanks versus uncertainty, Unicode/text alternatives, numeric tolerance/units, continuation ordering, approved handwritten transcription, excluded parts, scope/identity rejection, immutable raw extraction, response corrections, persisted run history and the desktop action. Integration tests make extraction/recognition/source/crop access fail if invoked during marking. These are synthetic developer-authored expectations; real teacher qualification and native desktop end-to-end use remain pending.
+- **Timing:** `marking_seconds` includes loading saved responses, manifest resolution/verification, comparison and constructing the audit snapshot. It excludes the final SQLite run insert, UI display and human review; `review_seconds` remains null. Extraction and recognition times are not added to it. This is not the M7 throughput benchmark and makes no ten-minute handwriting claim.
+
 #### M9 — Optional AI assistance for marking ambiguity
 
 - **Deliverable:** an optional local-AI step for cases M8 explicitly cannot resolve, with a teacher-review path. Routine deterministic results bypass AI.
@@ -360,3 +372,99 @@ Dataset shape: `{"qualification":"real-labeled","cases":[{"image":"english-01.pn
 - Timing: measure extraction, marking and manual review separately on representative inputs; report hardware, model, cold/warm runs, accuracy and review rate against the unverified ten-minute extraction target.
 
 This update documents the next stage only. Application code, migrations, service restarts and new APIs are outside this documentation change.
+
+### Temporary local development manifest lookup (2026-10-02)
+
+The user requested token-free testing. In the desktop workflow, an empty token with a loopback backend URL now fetches `/api/development/automark/layouts/{type}/{id}/{layoutId}`. Staff account ID remains the local cache/job namespace, so retain the same value when retrying saved jobs. Remote cached layouts still work offline; remote uncached lookup requires a token. Providing a token uses the existing teacher endpoint.
+
+The backend controller exists only under the `development` profile and checks loopback binding, a loopback caller, no proxy forwarding headers and the exact `imarisha_development` datasource before reading a manifest. It provides no write endpoint and does not weaken the authenticated teacher route. This temporary path can read development answer keys without staff authentication; it must not be used as a production sign-in mechanism. Backend activation and native desktop retry still require runtime validation. Failed-page metadata now retains the preparation error message, and the review view directs users to retry instead of acknowledging an unextracted page as resolved.
+
+Testing follow-up: removed the token and staff-account inputs from the structured desktop view. It now uses a fixed `local-development-testing` cache namespace with the loopback-only development endpoint. Existing account-scoped jobs are retained; users must create a new job from the same PDF to use this testing namespace. Reviewer name remains an audit label. Backend URL remains because the QR still contains a manifest reference, not its contents. The user's intended full-manifest-in-QR design has not yet been implemented; this temporary testing change does not make initial lookup independent of the backend.
+
+### Sample-based bulk approval (2026-10-02)
+
+At the user's request, response review comments are now optional, including individual corrections and exclusions. Reviewer identity and append-only history remain. The desktop **Approve all saved responses** action approves previously unreviewed saved values across every page, including available handwriting drafts; it preserves prior teacher decisions. Unsaved on-screen edits must be saved individually first. Invalid identity/selections and written regions without transcription remain unresolved, rather than being converted to blanks. The action reports approved, retained and skipped counts/pages. Completing review still checks document issues and duplicate/inconsistent identities before enabling separate marking. Document-issue resolution notes are unchanged. This supersedes earlier notes requiring a comment for every uncertain response.
+
+### Manifest scoring and local AI assistance (2026-10-02)
+
+The user authorized using existing manifest answers directly, partial marking and accepting equivalent work, with local AI resolving marking ambiguity. This supersedes M8's earlier requirement to select a rule whenever the backend carries `ASSESSMENT_POLICY_REQUIRED`.
+
+- The absent/legacy placeholder policy now falls back to the agreed scoring rules. Explicit question/manifest rules and teacher overrides remain supported. Missing keys, invalid identities, excluded/missing parts and unreadable text are not resolved by inventing answers.
+- MC/TF receive full marks for an accepted answer, otherwise zero. Matching uses `question marks × correct items / total items`; the question allocation is never repeated per item. Multiple-answer credit is `question marks × max(0, correct selections − wrong selections) / correct options`. This prevents selecting all options from automatically earning full credit. Partial scores round half-up to two decimals and never exceed the question allocation. The UI describes these rules and retains an all-or-nothing override.
+- Written responses first compare approved text against references and accepted alternatives using case-insensitive NFC/whitespace normalization. Blank approved responses score zero. Other wording is eligible for local AI; extraction, transcription and structured marking bypass this AI operation.
+- `core/ai_marking.py` provides text-only Ollama assistance using installed local GGUF weights, loopback-only transport, no proxy/redirect/cloud fallback or model downloads, bounded input/output and timeouts. The marking model is independent of the handwriting model. The desktop defaults to the installed Qwen3 4B text candidate; the AI checkbox can disable assistance. CLI opt-in is `--ai-model MODEL`.
+- Equivalent meaning can receive full credit. Partial written credit requires supplied `answerDetail` marking guidance. Model uncertainty, missing guidance for a partly correct answer, incomplete/invalid output, impossible marks and missing quoted evidence remain review cases. There is no claim that schema validation proves the model's judgment correct. The selected local model still needs teacher qualification, including English/Kiswahili variants and adversarial student text.
+- Results keep deterministic/AI provenance, proposal, quoted student evidence, explanation, model/digest, prompt version and timing in the existing append-only marking-run audit. The UI displays AI explanations. Same-question, same-rule, identical approved text reuses the AI result within a run. Total marking time includes AI; `ai_seconds` reports it separately. Raw extraction, prior approvals and earlier marking runs remain intact.
+- Validation: 99 relevant tests passed across marking, AI contracts, desktop review, saved jobs, written capture and handwriting. Tests cover fractional matching marks, wrong-choice deductions, placeholder fallback, guidance requirements, out-of-range/model output rejection, local-only weights, fail-fast unavailability, structured bypass and persisted AI scoring versus re-marking with AI disabled. Live synthetic checks exposed Gemma's overly literal interpretation and Qwen explanation truncation; output bounds were tightened. These checks do not establish real-exam accuracy or that AI will resolve most review cases. No real student answers were marked during implementation, no services were restarted and no remote changes were made.
+
+Final synthetic smoke check after bounding explanation length: installed `qwen3:4b-instruct-2507-q4_K_M` accepted an equivalent plant-food/sunlight paraphrase for 2/2 in 2.575 seconds, with quoted evidence and rationale. This is a single synthetic example, not a handwriting, class-scale or real grading accuracy benchmark. Final focused marking/AI/UI checks were rerun after the prompt/output change.
+
+### Marking output report (2026-10-02)
+
+Added an explicit **Export results report and audit** action to saved marking runs.
+It writes a printable HTML report and the complete saved run as JSON to a unique
+folder, without rescanning, re-marking, uploading, or overwriting earlier exports.
+The report includes student IDs, resolved subtotals, question marks, reviewed
+responses, unresolved reasons, AI explanations, and marking/AI durations. Pending
+scores stay pending rather than becoming zero; exports of changed response
+versions are prominently labelled outdated. Excluded responses are disclosed.
+The JSON is a local audit export, not an Imarisha import API contract.
+
+Validation: export preservation/escaping test and existing structured view tests:
+7 passed. Generated the report for saved run 3. Written marking limitations remain;
+this output feature does not resolve or alter those scores.
+
+### Written marking validation and context (2026-10-02)
+
+- Evidence comparison normalizes Unicode NFC and whitespace only. A line break
+  no longer rejects a genuine quotation; different words still fail validation.
+- Backend-generated manifests now retain `questionText` from the accepted paper
+  snapshot and pass through explicit `scoringCriteria` when available. Existing
+  manifests and historical runs are not rewritten. No service was restarted.
+- The local review screen has a collapsed **Written question wording and
+  partial-credit criteria** editor. Supply the original wording and one criterion
+  per line as `marks | expected idea`. These apply across students for the layout,
+  are preserved in the run's policy snapshot, and do not change the backend.
+- Criteria use `{id, description, marks}`; positive allocations must sum to the
+  question maximum. AI must return each criterion once, evidence for each met
+  criterion, and a total equal to the deterministic sum of awarded points.
+  General answer explanations are background, not extra required criteria.
+- Unresolved written answers receive a separate token-overlap F1 similarity
+  suggestion: `maximumMarks * 2 * sharedTokenCount / combinedTokenCount`, using
+  the best reference/accepted alternative. This is an uncalibrated lexical
+  estimate, not a statistical probability of correctness. It is labelled in
+  the UI/report and excluded from final totals; negation, synonyms and translated
+  equivalents make automatic use unsafe without validation.
+- `python -m tools.evaluate_written_marking examples.json output.json` tests local
+  AI without altering saved jobs. Each example contains `question`, `studentAnswer`
+  and optionally teacher-established `expectedScore`. Unlabelled cases measure
+  resolution/latency only, not accuracy. Output retains model decisions and timing.
+- Live trial: five saved answers from student 00535, using the revised Qwen 4B
+  prompt with paraphrase examples, took 13.40 seconds; 0/5 resolved. These older
+  manifests lack question wording/criteria. No teacher scores have been supplied;
+  real grading accuracy remains unverified. Prompt changes alone have not solved
+  the model's excessive deferral. No saved scores were modified by these trials.
+
+### Offline manifest handoff (2026-10-02)
+
+Supersedes the backend-fetch and token-free development workflow described above.
+Imarisha Print & PDF now provides `automark-manifest.json` as a separate download
+and includes it in `print-pack.zip`. It wraps the saved, answer-enriched layout in
+`{format: "imarisha-automark-manifest", packageVersion: 1, manifest: ...}`.
+One file serves every student using that layout. Keep it with the teacher because
+it includes answers. Student QR contents remain layout/page/student references.
+
+AutoMark's **Upload manifest** action imports this file into its local cache;
+manual paths and CLI `--manifest` are also supported. Backend URL/token/account
+inputs and the HTTP manifest client have been removed. The temporary unauthenticated
+development endpoint was removed. The authenticated backend layout storage remains
+part of Imarisha's print generation, not an AutoMark runtime dependency.
+Imports validate geometry and package version, enforce a 1 MB limit, and reject
+changes to an already imported immutable identity. A missing layout asks for an
+import, never a backend connection. Existing review jobs retain their stored scope
+and decisions while reading manifests from the new local import cache.
+
+Validation: 137 targeted AutoMark tests, 38 frontend PDF tests, and backend layout,
+assignment, and topic-storage migration tests passed. This includes a file-import
+through PDF-extraction test with no backend. Service activation is separate;
+no restart or deployment was performed. AI grading accuracy limitations above remain.

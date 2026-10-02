@@ -6,7 +6,7 @@ import sqlite3
 import pytest
 
 from core.manifest_layout import LegacySheet, PreparationError, bind_sheet, parse_sheet_qr, validate_manifest
-from services.manifest_resolver import CachedManifestResolver, TeacherManifestClient
+from services.manifest_resolver import CachedManifestResolver
 from tools.manifest_fixtures import FIXTURES, qr_payload
 
 
@@ -128,12 +128,6 @@ def test_conflicting_content_or_corrupt_cache_is_rejected(manifest, tmp_path):
 def test_fixture_import_cannot_populate_production_scope(manifest, tmp_path):
     with pytest.raises(PreparationError):
         CachedManifestResolver(tmp_path/"cache.db", "teacher").seed_fixture(manifest)
-
-
-@pytest.mark.parametrize("url", ["http://school.example", "https://user:password@school.example", "https://school.example?token=x", "file:///tmp"])
-def test_client_rejects_unsafe_token_destination(url):
-    with pytest.raises(PreparationError):
-        TeacherManifestClient(url, "fake-token")
 
 
 def test_contracts_and_manifest_lookup_do_not_import_legacy_ocr():

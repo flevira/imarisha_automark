@@ -1,0 +1,216 @@
+{
+  "layoutId": "m5-written-v6",
+  "version": 6,
+  "assessmentType": "EXAM",
+  "assessmentId": "42",
+  "unit": "pt",
+  "coordinateOrigin": "top-left",
+  "pages": [
+    {
+      "pageNumber": 1,
+      "width": 595.28,
+      "height": 841.89,
+      "rows": [
+        {
+          "questionId": "1",
+          "number": 1,
+          "kind": "MC",
+          "optionIndices": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "x": 40,
+          "y": 180,
+          "centers": [
+            110,
+            160,
+            210,
+            260
+          ],
+          "selectionMode": "single",
+          "bubbles": [
+            {
+              "optionId": "A",
+              "cx": 110,
+              "cy": 180,
+              "diameter": 14.18
+            },
+            {
+              "optionId": "B",
+              "cx": 160,
+              "cy": 180,
+              "diameter": 14.18
+            },
+            {
+              "optionId": "C",
+              "cx": 210,
+              "cy": 180,
+              "diameter": 14.18
+            },
+            {
+              "optionId": "D",
+              "cx": 260,
+              "cy": 180,
+              "diameter": 14.18
+            }
+          ]
+        }
+      ],
+      "headings": [],
+      "markers": [
+        {
+          "id": "TL",
+          "cx": 30,
+          "cy": 30,
+          "size": 16
+        },
+        {
+          "id": "TR",
+          "cx": 565.28,
+          "cy": 30,
+          "size": 16
+        },
+        {
+          "id": "BR",
+          "cx": 565.28,
+          "cy": 811.89,
+          "size": 16
+        },
+        {
+          "id": "BL",
+          "cx": 30,
+          "cy": 811.89,
+          "size": 16
+        }
+      ]
+    },
+    {
+      "pageNumber": 2,
+      "width": 595.28,
+      "height": 841.89,
+      "rows": [],
+      "headings": [],
+      "markers": [
+        {
+          "id": "TL",
+          "cx": 30,
+          "cy": 30,
+          "size": 16
+        },
+        {
+          "id": "TR",
+          "cx": 565.28,
+          "cy": 30,
+          "size": 16
+        },
+        {
+          "id": "BR",
+          "cx": 565.28,
+          "cy": 811.89,
+          "size": 16
+        },
+        {
+          "id": "BL",
+          "cx": 30,
+          "cy": 811.89,
+          "size": 16
+        }
+      ],
+      "writtenRegions": [
+        {
+          "regionId": "2-1",
+          "questionId": "2",
+          "number": 2,
+          "kind": "WRITTEN",
+          "order": 1,
+          "x": 44,
+          "y": 190,
+          "width": 507,
+          "height": 100
+        },
+        {
+          "regionId": "3-1",
+          "questionId": "3",
+          "number": 3,
+          "kind": "WRITTEN",
+          "order": 1,
+          "x": 44,
+          "y": 320,
+          "width": 507,
+          "height": 100
+        },
+        {
+          "regionId": "4-1",
+          "questionId": "4",
+          "number": 4,
+          "kind": "WRITTEN",
+          "order": 1,
+          "x": 44,
+          "y": 450,
+          "width": 507,
+          "height": 100
+        },
+        {
+          "regionId": "5-1",
+          "questionId": "5",
+          "number": 5,
+          "kind": "WRITTEN",
+          "order": 1,
+          "x": 44,
+          "y": 580,
+          "width": 507,
+          "height": 100
+        }
+      ]
+    },
+    {
+      "pageNumber": 3,
+      "width": 595.28,
+      "height": 841.89,
+      "rows": [],
+      "headings": [],
+      "markers": [
+        {
+          "id": "TL",
+          "cx": 30,
+          "cy": 30,
+          "size": 16
+        },
+        {
+          "id": "TR",
+          "cx": 565.28,
+          "cy": 30,
+          "size": 16
+        },
+        {
+          "id": "BR",
+          "cx": 565.28,
+          "cy": 811.89,
+          "size": 16
+        },
+        {
+          "id": "BL",
+          "cx": 30,
+          "cy": 811.89,
+          "size": 16
+        }
+      ],
+      "writtenRegions": [
+        {
+          "regionId": "6-1",
+          "questionId": "6",
+          "number": 6,
+          "kind": "WRITTEN",
+          "order": 1,
+          "x": 44,
+          "y": 190,
+          "width": 507,
+          "height": 100
+        }
+      ]
+    }
+  ],
+  "assessmentGroupId": "40"
+}

@@ -17,6 +17,9 @@ def build_home_view(page: ft.Page) -> None:
     page.scroll = ft.ScrollMode.AUTO
 
     selected_file_paths: list[str] = []
+    def open_structured(_):
+        from app.views.structured_view import build_structured_view
+        build_structured_view(page)
     selected_files = ft.Text("No file selected")
     extraction_stats = ft.Text("", selectable=True, visible=False)
     extraction_report_list = ft.ListView(
@@ -257,6 +260,7 @@ print(json.dumps(selected))
             content=ft.Column(
                 controls=[
                     ft.Text("Imarisha Automark", size=30, weight=ft.FontWeight.BOLD),
+                    ft.ElevatedButton("Structured extraction & saved review", on_click=open_structured),
                     ft.Text(
                         "Upload answer sheets, choose a Student ID source, and run extraction.",
                         size=14,

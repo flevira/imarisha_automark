@@ -1,0 +1,38 @@
+{
+  "display_number": 6,
+  "engine": "synthetic-oracle",
+  "item_number": null,
+  "layout": {
+    "assessment_group_id": "40",
+    "assessment_id": "42",
+    "assessment_type": "TEST",
+    "layout_id": "draft-written-layout",
+    "version": 1
+  },
+  "layout_page_number": 1,
+  "question_id": "10006",
+  "raw_text": "12",
+  "regions": [
+    {
+      "bbox": [
+        0,
+        0,
+        200,
+        100
+      ],
+      "crop_ref": "synthetic-written-12.png",
+      "page_number": 1,
+      "source_id": "synthetic-written-image"
+    }
+  ],
+  "response_id": "synthetic-written-response",
+  "response_type": "WRITTEN",
+  "review_reasons": [
+    "contract-only: not actual recognizer output"
+  ],
+  "revision": 1,
+  "schema_version": 1,
+  "selected_options": [],
+  "status": "uncertain",
+  "student_id": "00530"
+}

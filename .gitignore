@@ -1,0 +1,12 @@
+# Local runtime, student data and generated test artifacts
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.DS_Store
+*.db
+*.db-*
+*.sqlite*
+artifacts/
+*.joblock

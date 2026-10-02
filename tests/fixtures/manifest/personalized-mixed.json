@@ -1,0 +1,373 @@
+{
+  "layoutId": "synthetic-mixed-v4",
+  "version": 4,
+  "assessmentType": "EXAM",
+  "assessmentId": "42",
+  "assessmentGroupId": "40",
+  "unit": "pt",
+  "coordinateOrigin": "top-left",
+  "answerSchemaVersion": 1,
+  "sourceRequestId": "synthetic-request",
+  "totalMarks": 8,
+  "scoringPolicy": "ASSESSMENT_POLICY_REQUIRED",
+  "questions": [
+    {
+      "questionId": "10001",
+      "displayNumber": 1,
+      "maxMarks": 2,
+      "responseType": "MC",
+      "status": "READY",
+      "referenceAnswers": [
+        "A"
+      ],
+      "answerDetail": "Teacher-only fixture rubric"
+    },
+    {
+      "questionId": "10002",
+      "displayNumber": 2,
+      "maxMarks": 2,
+      "responseType": "MA",
+      "status": "READY",
+      "referenceAnswers": [
+        "A",
+        "C"
+      ],
+      "answerDetail": "Teacher-only fixture rubric"
+    },
+    {
+      "questionId": "10003",
+      "displayNumber": 3,
+      "maxMarks": 2,
+      "responseType": "TF",
+      "status": "READY",
+      "referenceAnswers": [
+        "true"
+      ],
+      "answerDetail": "Teacher-only fixture rubric"
+    },
+    {
+      "questionId": "10004",
+      "displayNumber": 4,
+      "maxMarks": 2,
+      "responseType": "MATCH",
+      "status": "READY",
+      "referenceAnswers": [
+        "A=A",
+        "B=B"
+      ],
+      "answerDetail": "Teacher-only fixture rubric"
+    }
+  ],
+  "pages": [
+    {
+      "pageNumber": 1,
+      "width": 595.28,
+      "height": 841.89,
+      "headings": [],
+      "rows": [
+        {
+          "questionId": "10001",
+          "number": 1,
+          "kind": "MC",
+          "x": 40,
+          "y": 180,
+          "optionIndices": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "centers": [
+            110,
+            160,
+            210,
+            260
+          ],
+          "selectionMode": "single",
+          "bubbles": [
+            {
+              "optionId": "A",
+              "cx": 110,
+              "cy": 180,
+              "diameter": 14.18
+            },
+            {
+              "optionId": "B",
+              "cx": 160,
+              "cy": 180,
+              "diameter": 14.18
+            },
+            {
+              "optionId": "C",
+              "cx": 210,
+              "cy": 180,
+              "diameter": 14.18
+            },
+            {
+              "optionId": "D",
+              "cx": 260,
+              "cy": 180,
+              "diameter": 14.18
+            }
+          ],
+          "correctAnswers": [
+            "A"
+          ],
+          "questionMarks": 2,
+          "answerStatus": "READY"
+        },
+        {
+          "questionId": "10002",
+          "number": 2,
+          "kind": "MA",
+          "x": 40,
+          "y": 200,
+          "optionIndices": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "centers": [
+            110,
+            160,
+            210,
+            260
+          ],
+          "selectionMode": "multiple",
+          "bubbles": [
+            {
+              "optionId": "A",
+              "cx": 110,
+              "cy": 200,
+              "diameter": 14.18
+            },
+            {
+              "optionId": "B",
+              "cx": 160,
+              "cy": 200,
+              "diameter": 14.18
+            },
+            {
+              "optionId": "C",
+              "cx": 210,
+              "cy": 200,
+              "diameter": 14.18
+            },
+            {
+              "optionId": "D",
+              "cx": 260,
+              "cy": 200,
+              "diameter": 14.18
+            }
+          ],
+          "correctAnswers": [
+            "A",
+            "C"
+          ],
+          "questionMarks": 2,
+          "answerStatus": "READY"
+        },
+        {
+          "questionId": "10003",
+          "number": 3,
+          "kind": "TF",
+          "x": 40,
+          "y": 220,
+          "optionIndices": [
+            0,
+            1
+          ],
+          "centers": [
+            130,
+            210
+          ],
+          "selectionMode": "single",
+          "bubbles": [
+            {
+              "optionId": "true",
+              "cx": 130,
+              "cy": 220,
+              "diameter": 14.18
+            },
+            {
+              "optionId": "false",
+              "cx": 210,
+              "cy": 220,
+              "diameter": 14.18
+            }
+          ],
+          "correctAnswers": [
+            "true"
+          ],
+          "questionMarks": 2,
+          "answerStatus": "READY"
+        }
+      ],
+      "markers": [
+        {
+          "id": "TL",
+          "cx": 30,
+          "cy": 30,
+          "size": 16
+        },
+        {
+          "id": "TR",
+          "cx": 565.28,
+          "cy": 30,
+          "size": 16
+        },
+        {
+          "id": "BR",
+          "cx": 565.28,
+          "cy": 811.89,
+          "size": 16
+        },
+        {
+          "id": "BL",
+          "cx": 30,
+          "cy": 811.89,
+          "size": 16
+        }
+      ]
+    },
+    {
+      "pageNumber": 2,
+      "width": 595.28,
+      "height": 841.89,
+      "headings": [],
+      "rows": [
+        {
+          "questionId": "10004",
+          "number": 4,
+          "kind": "MATCH",
+          "x": 40,
+          "y": 180,
+          "optionIndices": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "centers": [
+            110,
+            160,
+            210,
+            260
+          ],
+          "selectionMode": "single",
+          "bubbles": [
+            {
+              "optionId": "A",
+              "cx": 110,
+              "cy": 180,
+              "diameter": 14.18
+            },
+            {
+              "optionId": "B",
+              "cx": 160,
+              "cy": 180,
+              "diameter": 14.18
+            },
+            {
+              "optionId": "C",
+              "cx": 210,
+              "cy": 180,
+              "diameter": 14.18
+            },
+            {
+              "optionId": "D",
+              "cx": 260,
+              "cy": 180,
+              "diameter": 14.18
+            }
+          ],
+          "correctAnswers": [
+            "A"
+          ],
+          "questionMarks": 2,
+          "answerStatus": "READY",
+          "item": 1
+        },
+        {
+          "questionId": "10004",
+          "number": 4,
+          "kind": "MATCH",
+          "x": 40,
+          "y": 200,
+          "optionIndices": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "centers": [
+            110,
+            160,
+            210,
+            260
+          ],
+          "selectionMode": "single",
+          "bubbles": [
+            {
+              "optionId": "A",
+              "cx": 110,
+              "cy": 200,
+              "diameter": 14.18
+            },
+            {
+              "optionId": "B",
+              "cx": 160,
+              "cy": 200,
+              "diameter": 14.18
+            },
+            {
+              "optionId": "C",
+              "cx": 210,
+              "cy": 200,
+              "diameter": 14.18
+            },
+            {
+              "optionId": "D",
+              "cx": 260,
+              "cy": 200,
+              "diameter": 14.18
+            }
+          ],
+          "correctAnswers": [
+            "B"
+          ],
+          "questionMarks": 2,
+          "answerStatus": "READY",
+          "item": 2
+        }
+      ],
+      "markers": [
+        {
+          "id": "TL",
+          "cx": 30,
+          "cy": 30,
+          "size": 16
+        },
+        {
+          "id": "TR",
+          "cx": 565.28,
+          "cy": 30,
+          "size": 16
+        },
+        {
+          "id": "BR",
+          "cx": 565.28,
+          "cy": 811.89,
+          "size": 16
+        },
+        {
+          "id": "BL",
+          "cx": 30,
+          "cy": 811.89,
+          "size": 16
+        }
+      ]
+    }
+  ]
+}

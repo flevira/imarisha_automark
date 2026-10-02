@@ -1,0 +1,48 @@
+[
+  {
+    "page": 1,
+    "student_id": "00530",
+    "question_id": "10001",
+    "item_number": null,
+    "selected_options": [
+      "B"
+    ]
+  },
+  {
+    "page": 1,
+    "student_id": "00530",
+    "question_id": "10002",
+    "item_number": null,
+    "selected_options": [
+      "A",
+      "D"
+    ]
+  },
+  {
+    "page": 1,
+    "student_id": "00530",
+    "question_id": "10003",
+    "item_number": null,
+    "selected_options": [
+      "false"
+    ]
+  },
+  {
+    "page": 2,
+    "student_id": "00530",
+    "question_id": "10004",
+    "item_number": 1,
+    "selected_options": [
+      "B"
+    ]
+  },
+  {
+    "page": 2,
+    "student_id": "00530",
+    "question_id": "10004",
+    "item_number": 2,
+    "selected_options": [
+      "A"
+    ]
+  }
+]

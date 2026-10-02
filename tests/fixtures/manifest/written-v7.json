@@ -1,0 +1,1218 @@
+{
+  "layoutId": "m5-written-v7",
+  "version": 7,
+  "assessmentType": "EXAM",
+  "assessmentId": "42",
+  "unit": "pt",
+  "coordinateOrigin": "top-left",
+  "pages": [
+    {
+      "studentNumber": {
+        "field": "studentId",
+        "digitCount": 5,
+        "order": "left-to-right",
+        "selectionMode": "single-per-column",
+        "preserveLeadingZeros": true,
+        "columns": [
+          {
+            "position": 1,
+            "bubbles": [
+              {
+                "value": "0",
+                "cx": 68,
+                "cy": 82,
+                "diameter": 14.18
+              },
+              {
+                "value": "1",
+                "cx": 68,
+                "cy": 102,
+                "diameter": 14.18
+              },
+              {
+                "value": "2",
+                "cx": 68,
+                "cy": 122,
+                "diameter": 14.18
+              },
+              {
+                "value": "3",
+                "cx": 68,
+                "cy": 142,
+                "diameter": 14.18
+              },
+              {
+                "value": "4",
+                "cx": 68,
+                "cy": 162,
+                "diameter": 14.18
+              },
+              {
+                "value": "5",
+                "cx": 68,
+                "cy": 182,
+                "diameter": 14.18
+              },
+              {
+                "value": "6",
+                "cx": 68,
+                "cy": 202,
+                "diameter": 14.18
+              },
+              {
+                "value": "7",
+                "cx": 68,
+                "cy": 222,
+                "diameter": 14.18
+              },
+              {
+                "value": "8",
+                "cx": 68,
+                "cy": 242,
+                "diameter": 14.18
+              },
+              {
+                "value": "9",
+                "cx": 68,
+                "cy": 262,
+                "diameter": 14.18
+              }
+            ]
+          },
+          {
+            "position": 2,
+            "bubbles": [
+              {
+                "value": "0",
+                "cx": 96,
+                "cy": 82,
+                "diameter": 14.18
+              },
+              {
+                "value": "1",
+                "cx": 96,
+                "cy": 102,
+                "diameter": 14.18
+              },
+              {
+                "value": "2",
+                "cx": 96,
+                "cy": 122,
+                "diameter": 14.18
+              },
+              {
+                "value": "3",
+                "cx": 96,
+                "cy": 142,
+                "diameter": 14.18
+              },
+              {
+                "value": "4",
+                "cx": 96,
+                "cy": 162,
+                "diameter": 14.18
+              },
+              {
+                "value": "5",
+                "cx": 96,
+                "cy": 182,
+                "diameter": 14.18
+              },
+              {
+                "value": "6",
+                "cx": 96,
+                "cy": 202,
+                "diameter": 14.18
+              },
+              {
+                "value": "7",
+                "cx": 96,
+                "cy": 222,
+                "diameter": 14.18
+              },
+              {
+                "value": "8",
+                "cx": 96,
+                "cy": 242,
+                "diameter": 14.18
+              },
+              {
+                "value": "9",
+                "cx": 96,
+                "cy": 262,
+                "diameter": 14.18
+              }
+            ]
+          },
+          {
+            "position": 3,
+            "bubbles": [
+              {
+                "value": "0",
+                "cx": 124,
+                "cy": 82,
+                "diameter": 14.18
+              },
+              {
+                "value": "1",
+                "cx": 124,
+                "cy": 102,
+                "diameter": 14.18
+              },
+              {
+                "value": "2",
+                "cx": 124,
+                "cy": 122,
+                "diameter": 14.18
+              },
+              {
+                "value": "3",
+                "cx": 124,
+                "cy": 142,
+                "diameter": 14.18
+              },
+              {
+                "value": "4",
+                "cx": 124,
+                "cy": 162,
+                "diameter": 14.18
+              },
+              {
+                "value": "5",
+                "cx": 124,
+                "cy": 182,
+                "diameter": 14.18
+              },
+              {
+                "value": "6",
+                "cx": 124,
+                "cy": 202,
+                "diameter": 14.18
+              },
+              {
+                "value": "7",
+                "cx": 124,
+                "cy": 222,
+                "diameter": 14.18
+              },
+              {
+                "value": "8",
+                "cx": 124,
+                "cy": 242,
+                "diameter": 14.18
+              },
+              {
+                "value": "9",
+                "cx": 124,
+                "cy": 262,
+                "diameter": 14.18
+              }
+            ]
+          },
+          {
+            "position": 4,
+            "bubbles": [
+              {
+                "value": "0",
+                "cx": 152,
+                "cy": 82,
+                "diameter": 14.18
+              },
+              {
+                "value": "1",
+                "cx": 152,
+                "cy": 102,
+                "diameter": 14.18
+              },
+              {
+                "value": "2",
+                "cx": 152,
+                "cy": 122,
+                "diameter": 14.18
+              },
+              {
+                "value": "3",
+                "cx": 152,
+                "cy": 142,
+                "diameter": 14.18
+              },
+              {
+                "value": "4",
+                "cx": 152,
+                "cy": 162,
+                "diameter": 14.18
+              },
+              {
+                "value": "5",
+                "cx": 152,
+                "cy": 182,
+                "diameter": 14.18
+              },
+              {
+                "value": "6",
+                "cx": 152,
+                "cy": 202,
+                "diameter": 14.18
+              },
+              {
+                "value": "7",
+                "cx": 152,
+                "cy": 222,
+                "diameter": 14.18
+              },
+              {
+                "value": "8",
+                "cx": 152,
+                "cy": 242,
+                "diameter": 14.18
+              },
+              {
+                "value": "9",
+                "cx": 152,
+                "cy": 262,
+                "diameter": 14.18
+              }
+            ]
+          },
+          {
+            "position": 5,
+            "bubbles": [
+              {
+                "value": "0",
+                "cx": 180,
+                "cy": 82,
+                "diameter": 14.18
+              },
+              {
+                "value": "1",
+                "cx": 180,
+                "cy": 102,
+                "diameter": 14.18
+              },
+              {
+                "value": "2",
+                "cx": 180,
+                "cy": 122,
+                "diameter": 14.18
+              },
+              {
+                "value": "3",
+                "cx": 180,
+                "cy": 142,
+                "diameter": 14.18
+              },
+              {
+                "value": "4",
+                "cx": 180,
+                "cy": 162,
+                "diameter": 14.18
+              },
+              {
+                "value": "5",
+                "cx": 180,
+                "cy": 182,
+                "diameter": 14.18
+              },
+              {
+                "value": "6",
+                "cx": 180,
+                "cy": 202,
+                "diameter": 14.18
+              },
+              {
+                "value": "7",
+                "cx": 180,
+                "cy": 222,
+                "diameter": 14.18
+              },
+              {
+                "value": "8",
+                "cx": 180,
+                "cy": 242,
+                "diameter": 14.18
+              },
+              {
+                "value": "9",
+                "cx": 180,
+                "cy": 262,
+                "diameter": 14.18
+              }
+            ]
+          }
+        ]
+      },
+      "pageNumber": 1,
+      "width": 595.28,
+      "height": 841.89,
+      "rows": [
+        {
+          "questionId": "1",
+          "number": 1,
+          "kind": "MC",
+          "optionIndices": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "x": 40,
+          "y": 300,
+          "centers": [
+            110,
+            160,
+            210,
+            260
+          ],
+          "selectionMode": "single",
+          "bubbles": [
+            {
+              "optionId": "A",
+              "cx": 110,
+              "cy": 300,
+              "diameter": 14.18
+            },
+            {
+              "optionId": "B",
+              "cx": 160,
+              "cy": 300,
+              "diameter": 14.18
+            },
+            {
+              "optionId": "C",
+              "cx": 210,
+              "cy": 300,
+              "diameter": 14.18
+            },
+            {
+              "optionId": "D",
+              "cx": 260,
+              "cy": 300,
+              "diameter": 14.18
+            }
+          ]
+        }
+      ],
+      "headings": [],
+      "markers": [
+        {
+          "id": "TL",
+          "cx": 30,
+          "cy": 30,
+          "size": 16
+        },
+        {
+          "id": "TR",
+          "cx": 565.28,
+          "cy": 30,
+          "size": 16
+        },
+        {
+          "id": "BR",
+          "cx": 565.28,
+          "cy": 811.89,
+          "size": 16
+        },
+        {
+          "id": "BL",
+          "cx": 30,
+          "cy": 811.89,
+          "size": 16
+        }
+      ]
+    },
+    {
+      "studentNumber": {
+        "field": "studentId",
+        "digitCount": 5,
+        "order": "left-to-right",
+        "selectionMode": "single-per-column",
+        "preserveLeadingZeros": true,
+        "columns": [
+          {
+            "position": 1,
+            "bubbles": [
+              {
+                "value": "0",
+                "cx": 68,
+                "cy": 82,
+                "diameter": 14.18
+              },
+              {
+                "value": "1",
+                "cx": 68,
+                "cy": 102,
+                "diameter": 14.18
+              },
+              {
+                "value": "2",
+                "cx": 68,
+                "cy": 122,
+                "diameter": 14.18
+              },
+              {
+                "value": "3",
+                "cx": 68,
+                "cy": 142,
+                "diameter": 14.18
+              },
+              {
+                "value": "4",
+                "cx": 68,
+                "cy": 162,
+                "diameter": 14.18
+              },
+              {
+                "value": "5",
+                "cx": 68,
+                "cy": 182,
+                "diameter": 14.18
+              },
+              {
+                "value": "6",
+                "cx": 68,
+                "cy": 202,
+                "diameter": 14.18
+              },
+              {
+                "value": "7",
+                "cx": 68,
+                "cy": 222,
+                "diameter": 14.18
+              },
+              {
+                "value": "8",
+                "cx": 68,
+                "cy": 242,
+                "diameter": 14.18
+              },
+              {
+                "value": "9",
+                "cx": 68,
+                "cy": 262,
+                "diameter": 14.18
+              }
+            ]
+          },
+          {
+            "position": 2,
+            "bubbles": [
+              {
+                "value": "0",
+                "cx": 96,
+                "cy": 82,
+                "diameter": 14.18
+              },
+              {
+                "value": "1",
+                "cx": 96,
+                "cy": 102,
+                "diameter": 14.18
+              },
+              {
+                "value": "2",
+                "cx": 96,
+                "cy": 122,
+                "diameter": 14.18
+              },
+              {
+                "value": "3",
+                "cx": 96,
+                "cy": 142,
+                "diameter": 14.18
+              },
+              {
+                "value": "4",
+                "cx": 96,
+                "cy": 162,
+                "diameter": 14.18
+              },
+              {
+                "value": "5",
+                "cx": 96,
+                "cy": 182,
+                "diameter": 14.18
+              },
+              {
+                "value": "6",
+                "cx": 96,
+                "cy": 202,
+                "diameter": 14.18
+              },
+              {
+                "value": "7",
+                "cx": 96,
+                "cy": 222,
+                "diameter": 14.18
+              },
+              {
+                "value": "8",
+                "cx": 96,
+                "cy": 242,
+                "diameter": 14.18
+              },
+              {
+                "value": "9",
+                "cx": 96,
+                "cy": 262,
+                "diameter": 14.18
+              }
+            ]
+          },
+          {
+            "position": 3,
+            "bubbles": [
+              {
+                "value": "0",
+                "cx": 124,
+                "cy": 82,
+                "diameter": 14.18
+              },
+              {
+                "value": "1",
+                "cx": 124,
+                "cy": 102,
+                "diameter": 14.18
+              },
+              {
+                "value": "2",
+                "cx": 124,
+                "cy": 122,
+                "diameter": 14.18
+              },
+              {
+                "value": "3",
+                "cx": 124,
+                "cy": 142,
+                "diameter": 14.18
+              },
+              {
+                "value": "4",
+                "cx": 124,
+                "cy": 162,
+                "diameter": 14.18
+              },
+              {
+                "value": "5",
+                "cx": 124,
+                "cy": 182,
+                "diameter": 14.18
+              },
+              {
+                "value": "6",
+                "cx": 124,
+                "cy": 202,
+                "diameter": 14.18
+              },
+              {
+                "value": "7",
+                "cx": 124,
+                "cy": 222,
+                "diameter": 14.18
+              },
+              {
+                "value": "8",
+                "cx": 124,
+                "cy": 242,
+                "diameter": 14.18
+              },
+              {
+                "value": "9",
+                "cx": 124,
+                "cy": 262,
+                "diameter": 14.18
+              }
+            ]
+          },
+          {
+            "position": 4,
+            "bubbles": [
+              {
+                "value": "0",
+                "cx": 152,
+                "cy": 82,
+                "diameter": 14.18
+              },
+              {
+                "value": "1",
+                "cx": 152,
+                "cy": 102,
+                "diameter": 14.18
+              },
+              {
+                "value": "2",
+                "cx": 152,
+                "cy": 122,
+                "diameter": 14.18
+              },
+              {
+                "value": "3",
+                "cx": 152,
+                "cy": 142,
+                "diameter": 14.18
+              },
+              {
+                "value": "4",
+                "cx": 152,
+                "cy": 162,
+                "diameter": 14.18
+              },
+              {
+                "value": "5",
+                "cx": 152,
+                "cy": 182,
+                "diameter": 14.18
+              },
+              {
+                "value": "6",
+                "cx": 152,
+                "cy": 202,
+                "diameter": 14.18
+              },
+              {
+                "value": "7",
+                "cx": 152,
+                "cy": 222,
+                "diameter": 14.18
+              },
+              {
+                "value": "8",
+                "cx": 152,
+                "cy": 242,
+                "diameter": 14.18
+              },
+              {
+                "value": "9",
+                "cx": 152,
+                "cy": 262,
+                "diameter": 14.18
+              }
+            ]
+          },
+          {
+            "position": 5,
+            "bubbles": [
+              {
+                "value": "0",
+                "cx": 180,
+                "cy": 82,
+                "diameter": 14.18
+              },
+              {
+                "value": "1",
+                "cx": 180,
+                "cy": 102,
+                "diameter": 14.18
+              },
+              {
+                "value": "2",
+                "cx": 180,
+                "cy": 122,
+                "diameter": 14.18
+              },
+              {
+                "value": "3",
+                "cx": 180,
+                "cy": 142,
+                "diameter": 14.18
+              },
+              {
+                "value": "4",
+                "cx": 180,
+                "cy": 162,
+                "diameter": 14.18
+              },
+              {
+                "value": "5",
+                "cx": 180,
+                "cy": 182,
+                "diameter": 14.18
+              },
+              {
+                "value": "6",
+                "cx": 180,
+                "cy": 202,
+                "diameter": 14.18
+              },
+              {
+                "value": "7",
+                "cx": 180,
+                "cy": 222,
+                "diameter": 14.18
+              },
+              {
+                "value": "8",
+                "cx": 180,
+                "cy": 242,
+                "diameter": 14.18
+              },
+              {
+                "value": "9",
+                "cx": 180,
+                "cy": 262,
+                "diameter": 14.18
+              }
+            ]
+          }
+        ]
+      },
+      "pageNumber": 2,
+      "width": 595.28,
+      "height": 841.89,
+      "rows": [],
+      "headings": [],
+      "markers": [
+        {
+          "id": "TL",
+          "cx": 30,
+          "cy": 30,
+          "size": 16
+        },
+        {
+          "id": "TR",
+          "cx": 565.28,
+          "cy": 30,
+          "size": 16
+        },
+        {
+          "id": "BR",
+          "cx": 565.28,
+          "cy": 811.89,
+          "size": 16
+        },
+        {
+          "id": "BL",
+          "cx": 30,
+          "cy": 811.89,
+          "size": 16
+        }
+      ],
+      "writtenRegions": [
+        {
+          "regionId": "2-1",
+          "questionId": "2",
+          "number": 2,
+          "kind": "WRITTEN",
+          "order": 1,
+          "x": 44,
+          "y": 310,
+          "width": 507,
+          "height": 100
+        },
+        {
+          "regionId": "3-1",
+          "questionId": "3",
+          "number": 3,
+          "kind": "WRITTEN",
+          "order": 1,
+          "x": 44,
+          "y": 440,
+          "width": 507,
+          "height": 100
+        },
+        {
+          "regionId": "4-1",
+          "questionId": "4",
+          "number": 4,
+          "kind": "WRITTEN",
+          "order": 1,
+          "x": 44,
+          "y": 570,
+          "width": 507,
+          "height": 100
+        }
+      ]
+    },
+    {
+      "studentNumber": {
+        "field": "studentId",
+        "digitCount": 5,
+        "order": "left-to-right",
+        "selectionMode": "single-per-column",
+        "preserveLeadingZeros": true,
+        "columns": [
+          {
+            "position": 1,
+            "bubbles": [
+              {
+                "value": "0",
+                "cx": 68,
+                "cy": 82,
+                "diameter": 14.18
+              },
+              {
+                "value": "1",
+                "cx": 68,
+                "cy": 102,
+                "diameter": 14.18
+              },
+              {
+                "value": "2",
+                "cx": 68,
+                "cy": 122,
+                "diameter": 14.18
+              },
+              {
+                "value": "3",
+                "cx": 68,
+                "cy": 142,
+                "diameter": 14.18
+              },
+              {
+                "value": "4",
+                "cx": 68,
+                "cy": 162,
+                "diameter": 14.18
+              },
+              {
+                "value": "5",
+                "cx": 68,
+                "cy": 182,
+                "diameter": 14.18
+              },
+              {
+                "value": "6",
+                "cx": 68,
+                "cy": 202,
+                "diameter": 14.18
+              },
+              {
+                "value": "7",
+                "cx": 68,
+                "cy": 222,
+                "diameter": 14.18
+              },
+              {
+                "value": "8",
+                "cx": 68,
+                "cy": 242,
+                "diameter": 14.18
+              },
+              {
+                "value": "9",
+                "cx": 68,
+                "cy": 262,
+                "diameter": 14.18
+              }
+            ]
+          },
+          {
+            "position": 2,
+            "bubbles": [
+              {
+                "value": "0",
+                "cx": 96,
+                "cy": 82,
+                "diameter": 14.18
+              },
+              {
+                "value": "1",
+                "cx": 96,
+                "cy": 102,
+                "diameter": 14.18
+              },
+              {
+                "value": "2",
+                "cx": 96,
+                "cy": 122,
+                "diameter": 14.18
+              },
+              {
+                "value": "3",
+                "cx": 96,
+                "cy": 142,
+                "diameter": 14.18
+              },
+              {
+                "value": "4",
+                "cx": 96,
+                "cy": 162,
+                "diameter": 14.18
+              },
+              {
+                "value": "5",
+                "cx": 96,
+                "cy": 182,
+                "diameter": 14.18
+              },
+              {
+                "value": "6",
+                "cx": 96,
+                "cy": 202,
+                "diameter": 14.18
+              },
+              {
+                "value": "7",
+                "cx": 96,
+                "cy": 222,
+                "diameter": 14.18
+              },
+              {
+                "value": "8",
+                "cx": 96,
+                "cy": 242,
+                "diameter": 14.18
+              },
+              {
+                "value": "9",
+                "cx": 96,
+                "cy": 262,
+                "diameter": 14.18
+              }
+            ]
+          },
+          {
+            "position": 3,
+            "bubbles": [
+              {
+                "value": "0",
+                "cx": 124,
+                "cy": 82,
+                "diameter": 14.18
+              },
+              {
+                "value": "1",
+                "cx": 124,
+                "cy": 102,
+                "diameter": 14.18
+              },
+              {
+                "value": "2",
+                "cx": 124,
+                "cy": 122,
+                "diameter": 14.18
+              },
+              {
+                "value": "3",
+                "cx": 124,
+                "cy": 142,
+                "diameter": 14.18
+              },
+              {
+                "value": "4",
+                "cx": 124,
+                "cy": 162,
+                "diameter": 14.18
+              },
+              {
+                "value": "5",
+                "cx": 124,
+                "cy": 182,
+                "diameter": 14.18
+              },
+              {
+                "value": "6",
+                "cx": 124,
+                "cy": 202,
+                "diameter": 14.18
+              },
+              {
+                "value": "7",
+                "cx": 124,
+                "cy": 222,
+                "diameter": 14.18
+              },
+              {
+                "value": "8",
+                "cx": 124,
+                "cy": 242,
+                "diameter": 14.18
+              },
+              {
+                "value": "9",
+                "cx": 124,
+                "cy": 262,
+                "diameter": 14.18
+              }
+            ]
+          },
+          {
+            "position": 4,
+            "bubbles": [
+              {
+                "value": "0",
+                "cx": 152,
+                "cy": 82,
+                "diameter": 14.18
+              },
+              {
+                "value": "1",
+                "cx": 152,
+                "cy": 102,
+                "diameter": 14.18
+              },
+              {
+                "value": "2",
+                "cx": 152,
+                "cy": 122,
+                "diameter": 14.18
+              },
+              {
+                "value": "3",
+                "cx": 152,
+                "cy": 142,
+                "diameter": 14.18
+              },
+              {
+                "value": "4",
+                "cx": 152,
+                "cy": 162,
+                "diameter": 14.18
+              },
+              {
+                "value": "5",
+                "cx": 152,
+                "cy": 182,
+                "diameter": 14.18
+              },
+              {
+                "value": "6",
+                "cx": 152,
+                "cy": 202,
+                "diameter": 14.18
+              },
+              {
+                "value": "7",
+                "cx": 152,
+                "cy": 222,
+                "diameter": 14.18
+              },
+              {
+                "value": "8",
+                "cx": 152,
+                "cy": 242,
+                "diameter": 14.18
+              },
+              {
+                "value": "9",
+                "cx": 152,
+                "cy": 262,
+                "diameter": 14.18
+              }
+            ]
+          },
+          {
+            "position": 5,
+            "bubbles": [
+              {
+                "value": "0",
+                "cx": 180,
+                "cy": 82,
+                "diameter": 14.18
+              },
+              {
+                "value": "1",
+                "cx": 180,
+                "cy": 102,
+                "diameter": 14.18
+              },
+              {
+                "value": "2",
+                "cx": 180,
+                "cy": 122,
+                "diameter": 14.18
+              },
+              {
+                "value": "3",
+                "cx": 180,
+                "cy": 142,
+                "diameter": 14.18
+              },
+              {
+                "value": "4",
+                "cx": 180,
+                "cy": 162,
+                "diameter": 14.18
+              },
+              {
+                "value": "5",
+                "cx": 180,
+                "cy": 182,
+                "diameter": 14.18
+              },
+              {
+                "value": "6",
+                "cx": 180,
+                "cy": 202,
+                "diameter": 14.18
+              },
+              {
+                "value": "7",
+                "cx": 180,
+                "cy": 222,
+                "diameter": 14.18
+              },
+              {
+                "value": "8",
+                "cx": 180,
+                "cy": 242,
+                "diameter": 14.18
+              },
+              {
+                "value": "9",
+                "cx": 180,
+                "cy": 262,
+                "diameter": 14.18
+              }
+            ]
+          }
+        ]
+      },
+      "pageNumber": 3,
+      "width": 595.28,
+      "height": 841.89,
+      "rows": [],
+      "headings": [],
+      "markers": [
+        {
+          "id": "TL",
+          "cx": 30,
+          "cy": 30,
+          "size": 16
+        },
+        {
+          "id": "TR",
+          "cx": 565.28,
+          "cy": 30,
+          "size": 16
+        },
+        {
+          "id": "BR",
+          "cx": 565.28,
+          "cy": 811.89,
+          "size": 16
+        },
+        {
+          "id": "BL",
+          "cx": 30,
+          "cy": 811.89,
+          "size": 16
+        }
+      ],
+      "writtenRegions": [
+        {
+          "regionId": "5-1",
+          "questionId": "5",
+          "number": 5,
+          "kind": "WRITTEN",
+          "order": 1,
+          "x": 44,
+          "y": 310,
+          "width": 507,
+          "height": 100
+        },
+        {
+          "regionId": "6-1",
+          "questionId": "6",
+          "number": 6,
+          "kind": "WRITTEN",
+          "order": 1,
+          "x": 44,
+          "y": 440,
+          "width": 507,
+          "height": 100
+        }
+      ]
+    }
+  ],
+  "assessmentGroupId": "40"
+}

@@ -1,0 +1,223 @@
+{
+  "schema_version": 1,
+  "synthetic": true,
+  "python": "3.11.15",
+  "cached_easyocr_weights_present": {
+    "craft_mlt_25k.pth": true,
+    "english_g2.pth": true
+  },
+  "platform": "macOS-15.6-arm64-arm-64bit",
+  "machine": "arm64",
+  "packages": {
+    "PyMuPDF": "1.28.2",
+    "opencv-python-headless": "5.0.0.93",
+    "pytesseract": "0.3.13",
+    "easyocr": "1.7.2",
+    "torch": "2.14.1"
+  },
+  "tesseract": "tesseract 5.5.2",
+  "ocr_profile": "Tesseract + cached English EasyOCR CPU; Paddle disabled; no model downloads",
+  "timing_scope": "Extractor call incl. lazy model loading; process wall includes Python imports. No marking or SQLite persistence.",
+  "scan_dpi": 150,
+  "recorded_date": "2026-10-02",
+  "extractor_base_commit": "e98f7dbb302ee32769ea31e32738a72781d450d3",
+  "extractor_sha256": {
+    "__init__.py": "548c9cb79dfd7ffe5ebc842911f8504a4579e32f0ab904700f6b4571a32162a6",
+    "bubbles.py": "59437ac8cf0d3ca9908a44e7a1ba1c8dd87b1d01be9db6e042ca70439c030f8e",
+    "confidence_model.py": "bbc82fb62361d15e97a8acecddaabf348610246f0e0a45e3a8c2f3135db6fd58",
+    "extractor.py": "273b550abe44db0bef2d3d29bcd477c55c116d9061699a82fb9a2204b2a2be87",
+    "ocr_engine.py": "9e5c2e39f1aafd710746139bea1801fa3170cadb5f46cff4985d4ac2b75c98be",
+    "qr.py": "38e6f23b70eee3839161a7dde4060e33c15fe421098889a98383edc2311316ac",
+    "rows.py": "8b37da0a9ac2a8334b337e262c134e526ddc739aa27820e93062094d66375088",
+    "sections.py": "0cf09d8a2c981083558508557ea17fcf3141de920e6705bdcf2cd2069c34ae2c",
+    "student_id.py": "0f1e1c14035f3fc3ae17b5b08539e6ca2ec2fc513b9ea311500c9f42ba258d26"
+  },
+  "limitations": [
+    "Synthetic 150 DPI clean scans, not representative classroom handwriting",
+    "One cold-process run per case; OS caches uncontrolled",
+    "CPU model and RAM not captured; arm64/macOS version recorded",
+    "No production persistence, marking or handwriting qualification"
+  ],
+  "cases": [
+    {
+      "id": "personalized-mixed-text",
+      "family": "manifest",
+      "pages": 2,
+      "status": "ok",
+      "process_seconds": 23.337712874999852,
+      "input_sha256": "8d089b2530180508f297c8fcf824ba40309cb330356e9c2a357e62add61a5487",
+      "oracle_sha256": "d6e4f049151a2d12edff846edecfe7be1610ecdb4d81107fdf5ecb0bd6681451",
+      "runs": [
+        {
+          "status": "ok",
+          "run": 1,
+          "cache_state": "cold-process",
+          "extraction_seconds": 21.851305208001577,
+          "metrics": {
+            "expected_responses": 5,
+            "exact_responses": 0,
+            "missing_responses": 5,
+            "unexpected_responses": 0,
+            "duplicate_selections": 0,
+            "matched_responses_needing_review": 0,
+            "detected_responses_needing_review": 0,
+            "exact_response_rate": 0.0,
+            "detected_review_rate": null,
+            "detected_responses": 0,
+            "output_rows": 0
+          }
+        }
+      ]
+    },
+    {
+      "id": "personalized-mixed-scan",
+      "family": "manifest",
+      "pages": 2,
+      "status": "ok",
+      "process_seconds": 31.026963416996296,
+      "input_sha256": "9517f99c3ac7cba7b3ec13a03e82cd97dc0d7cc59e58b95ab55782e664578fd4",
+      "oracle_sha256": "d6e4f049151a2d12edff846edecfe7be1610ecdb4d81107fdf5ecb0bd6681451",
+      "runs": [
+        {
+          "status": "ok",
+          "run": 1,
+          "cache_state": "cold-process",
+          "extraction_seconds": 29.37985441699857,
+          "metrics": {
+            "expected_responses": 5,
+            "exact_responses": 0,
+            "missing_responses": 5,
+            "unexpected_responses": 0,
+            "duplicate_selections": 0,
+            "matched_responses_needing_review": 0,
+            "detected_responses_needing_review": 0,
+            "exact_response_rate": 0.0,
+            "detected_review_rate": null,
+            "detected_responses": 0,
+            "output_rows": 0
+          }
+        }
+      ]
+    },
+    {
+      "id": "shared-tf-text",
+      "family": "manifest",
+      "pages": 1,
+      "status": "ok",
+      "process_seconds": 5.100431958002446,
+      "input_sha256": "79a38ef9e3ae9a010e04545951ee60183c9ab99b6824027c3c3533a3e178abb4",
+      "oracle_sha256": "b1ed385c13a19a32c61608366ab8b95dc664cfb2988b3aeabe450d4f472d6751",
+      "runs": [
+        {
+          "status": "ok",
+          "run": 1,
+          "cache_state": "cold-process",
+          "extraction_seconds": 4.241727749998972,
+          "metrics": {
+            "expected_responses": 1,
+            "exact_responses": 0,
+            "missing_responses": 1,
+            "unexpected_responses": 0,
+            "duplicate_selections": 0,
+            "matched_responses_needing_review": 0,
+            "detected_responses_needing_review": 0,
+            "exact_response_rate": 0.0,
+            "detected_review_rate": null,
+            "detected_responses": 0,
+            "output_rows": 0
+          }
+        }
+      ]
+    },
+    {
+      "id": "shared-tf-scan",
+      "family": "manifest",
+      "pages": 1,
+      "status": "ok",
+      "process_seconds": 8.511415666995163,
+      "input_sha256": "eb6c17a0e57040d0ea03ff6b0313eb0c9f8b54b8508727f1ab6e93ea69d787d8",
+      "oracle_sha256": "b1ed385c13a19a32c61608366ab8b95dc664cfb2988b3aeabe450d4f472d6751",
+      "runs": [
+        {
+          "status": "ok",
+          "run": 1,
+          "cache_state": "cold-process",
+          "extraction_seconds": 7.730941125002573,
+          "metrics": {
+            "expected_responses": 1,
+            "exact_responses": 0,
+            "missing_responses": 1,
+            "unexpected_responses": 0,
+            "duplicate_selections": 0,
+            "matched_responses_needing_review": 0,
+            "detected_responses_needing_review": 0,
+            "exact_response_rate": 0.0,
+            "detected_review_rate": null,
+            "detected_responses": 0,
+            "output_rows": 0
+          }
+        }
+      ]
+    },
+    {
+      "id": "legacy-control-text",
+      "family": "legacy",
+      "pages": 1,
+      "status": "ok",
+      "process_seconds": 14.573765624998487,
+      "input_sha256": "b2159a1a6d6ee7b9247ec595c510ae6298048a21bca7d612fb8ce05b082ffc8a",
+      "oracle_sha256": "9ff5e7f93367c0b7ceb36926d45075512d71e9be3ef8a4da31c65184a6344d9a",
+      "runs": [
+        {
+          "status": "ok",
+          "run": 1,
+          "cache_state": "cold-process",
+          "extraction_seconds": 13.010420209000586,
+          "metrics": {
+            "expected_responses": 1,
+            "exact_responses": 1,
+            "missing_responses": 0,
+            "unexpected_responses": 0,
+            "duplicate_selections": 0,
+            "matched_responses_needing_review": 0,
+            "detected_responses_needing_review": 0,
+            "exact_response_rate": 1.0,
+            "detected_review_rate": 0.0,
+            "detected_responses": 1,
+            "output_rows": 1
+          }
+        }
+      ]
+    },
+    {
+      "id": "legacy-control-scan",
+      "family": "legacy",
+      "pages": 1,
+      "status": "ok",
+      "process_seconds": 17.41410787499626,
+      "input_sha256": "26df0b8190560d9a38590589bf0f25d07fbdb828691331c81ef782e3c6729605",
+      "oracle_sha256": "9ff5e7f93367c0b7ceb36926d45075512d71e9be3ef8a4da31c65184a6344d9a",
+      "runs": [
+        {
+          "status": "ok",
+          "run": 1,
+          "cache_state": "cold-process",
+          "extraction_seconds": 15.727183125003648,
+          "metrics": {
+            "expected_responses": 1,
+            "exact_responses": 1,
+            "missing_responses": 0,
+            "unexpected_responses": 0,
+            "duplicate_selections": 0,
+            "matched_responses_needing_review": 0,
+            "detected_responses_needing_review": 0,
+            "exact_response_rate": 1.0,
+            "detected_review_rate": 0.0,
+            "detected_responses": 1,
+            "output_rows": 1
+          }
+        }
+      ]
+    }
+  ]
+}

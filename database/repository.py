@@ -1,8 +1,8 @@
-from __future__ import annotations
+"""Local persistence for structured extraction jobs and teacher decisions.
 
-from typing import Any
+Legacy extraction dictionaries are not silently converted into structured records.
+Use JobRepository.save_page() to atomically retain validated responses and evidence.
+"""
+from database.structured_repository import JobRepository
 
-
-def save_extraction_rows(rows: list[dict[str, Any]]) -> None:
-    """Placeholder repository function for future DB integration."""
-    _ = rows
+__all__ = ['JobRepository']

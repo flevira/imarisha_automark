@@ -162,6 +162,7 @@ class Transcription:
     engine: str
     seconds: float = 0
     model_digest: str | None = None
+    confidence: float | None = None
 
 
 @dataclass(frozen=True)

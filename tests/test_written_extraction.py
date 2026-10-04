@@ -136,7 +136,8 @@ def test_existing_review_database_gains_text_column_without_losing_history(tmp_p
     assert history[0]['raw_text'] is None
 
 
-def test_review_screen_allows_manual_written_transcription(setup):
+def test_review_screen_allows_manual_written_transcription(setup,monkeypatch,tmp_path):
+    monkeypatch.setattr("app.views.structured_view.cache_location",lambda:tmp_path/"manifests.db")
     import flet as ft
     from types import SimpleNamespace
     from app.views.structured_view import build_structured_view
@@ -157,7 +158,10 @@ def test_review_screen_allows_manual_written_transcription(setup):
     for control in page.controls:assert control._build_add_commands()
 
 
-def test_bulk_approval_does_not_turn_untranscribed_handwriting_into_blank(setup):
+def test_bulk_approval_does_not_turn_untranscribed_handwriting_into_blank(setup,monkeypatch):
+    from core.contracts import Transcription, ReadStatus
+    from core.local_text_ocr import LocalTextOCR
+    monkeypatch.setattr(LocalTextOCR,'recognize',lambda *a:Transcription(None,ReadStatus.UNCERTAIN,('ocr-no-text',),'tesseract-written-v1'))
     _,_,_,repo=setup
     job,rows=read(setup,'answers.pdf')
     result=repo.approve_all(job,'Teacher')

@@ -1,5 +1,5 @@
 """Durable M4 jobs and append-only teacher decisions, separate from legacy rows."""
-from contextlib import contextmanager
+from contextlib import contextmanager, ExitStack
 import hashlib
 import json
 import os
@@ -18,6 +18,10 @@ class JobRepository:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.connect() as db:
             db.executescript('''
+            CREATE TABLE IF NOT EXISTS teacher_examples(
+              id INTEGER PRIMARY KEY AUTOINCREMENT, scope TEXT NOT NULL, text TEXT NOT NULL,
+              score TEXT NOT NULL, reviewer TEXT NOT NULL, provenance TEXT NOT NULL,
+              source_job TEXT, created TEXT DEFAULT CURRENT_TIMESTAMP);
             CREATE TABLE IF NOT EXISTS structured_marking_runs(
               sequence INTEGER PRIMARY KEY AUTOINCREMENT, job TEXT NOT NULL,
               result TEXT NOT NULL, created TEXT DEFAULT CURRENT_TIMESTAMP);
@@ -99,10 +103,11 @@ class JobRepository:
         if source.stat().st_size > 200*1024*1024:
             raise ValueError('Upload limit is 200 MiB per job')
         data = source.read_bytes()
-        with fitz.open(stream=data, filetype='pdf') as doc:
+        from core.source_document import open_source
+        with open_source(data) as doc:
             total = len(doc)
             if doc.needs_pass or not 1 <= total <= 200:
-                raise ValueError('Use an unlocked PDF containing 1–200 pages')
+                raise ValueError('Use an unlocked PDF or supported image containing 1–200 pages')
         digest = hashlib.sha256(data).hexdigest()
         with self.connect() as db:
             db.execute('INSERT OR IGNORE INTO structured_sources VALUES (?,?)', (digest,data))
@@ -173,11 +178,33 @@ class JobRepository:
             db.execute('INSERT INTO structured_transcriptions(job,response,result,language) VALUES (?,?,?,?)',
                        (job,response_id,json.dumps(asdict(result)),language))
 
-    def save_marking_run(self, job, result):
+    def save_example(self, scope, text, score, reviewer, source_job=None):
+        from core.marking import decimal
+        if not scope or not text.strip() or not reviewer.strip():
+            raise ValueError('Example needs question, answer and teacher')
+        with self.connect() as db:
+            db.execute('INSERT INTO teacher_examples(scope,text,score,reviewer,provenance,source_job) VALUES(?,?,?,?,?,?)',
+                (scope,text,str(decimal(score)),reviewer.strip(),'teacher-score',source_job))
+
+    def examples(self, scope):
+        with self.connect() as db:
+            rows=[dict(r,approved=True) for r in db.execute(
+                'SELECT * FROM teacher_examples WHERE scope=? ORDER BY id DESC',(scope,))]
+        # Latest explicit correction to the same text replaces it for future retrieval.
+        from core.teacher_grounding import normalize
+        latest={}
+        for row in rows:latest.setdefault(normalize(row['text']),row)
+        return list(latest.values())
+
+    def save_marking_run(self, job, result, example=None):
         """Caller holds the job lock; runs are append-only and never extraction data."""
         with self.connect() as db:
-            return db.execute('INSERT INTO structured_marking_runs(job,result) VALUES (?,?)',
+            sequence=db.execute('INSERT INTO structured_marking_runs(job,result) VALUES (?,?)',
                               (job,json.dumps(result,allow_nan=False))).lastrowid
+            if example:
+                db.execute('INSERT INTO teacher_examples(scope,text,score,reviewer,provenance,source_job) VALUES(?,?,?,?,?,?)',
+                    (example['scope'],example['text'],example['score'],example['reviewer'],'teacher-score',job))
+            return sequence
 
     def marking_runs(self, job):
         with self.connect() as db:
@@ -305,9 +332,11 @@ class JobRepository:
             unresolved = [i for i in self.issues(job) if i['resolution'] is None]
             if unreviewed or unresolved:
                 pages = ', '.join(str(p) for p in sorted({r['page'] for r in unreviewed}))
+                written_pending=sum(r['selection_mode']=='text' for r in unreviewed)
                 raise ValueError(f'Review not complete: {len(unreviewed)} responses still need approval or exclusion'
                                  + (f' on pages {pages}' if pages else '')
-                                 + f'; {len(unresolved)} document issues need resolution. Use Review page to check the remaining responses.')
+                                 + f'; {len(unresolved)} document issues need resolution. Use Review page to check the remaining responses.'
+                                 + (f' {written_pending} written responses need review: enter their text manually and approve, or exclude them. AI is optional.' if written_pending else ''))
             identities, seen = {}, set()
             for row in self.responses(job):
                 decision, raw = row['review'], row['response']
@@ -321,3 +350,57 @@ class JobRepository:
                     raise ValueError('Exclude duplicate student/question responses before completing review')
                 seen.add(key)
             self.status(job,'complete')
+
+
+    def delete_saved_data(self, job=None, *, manifest_path=None, legacy_path=None):
+        """Delete a selected job or all jobs while refusing active job locks.
+
+        For a full reset, optional manifest/legacy databases are cleared in the same transaction.
+        """
+        with ExitStack() as locks:
+            jobs=self.jobs()
+            targets=[r['id'] for r in jobs if job is None or r['id']==job]
+            if job is not None and not targets:
+                raise ValueError('Saved job no longer exists')
+            for target in sorted(targets):
+                locks.enter_context(self.lock(target))
+            with self.connect() as db:
+                attached=[]
+                if job is None:
+                    for alias,path,table in [('manifest_store',manifest_path,'layout_cache'),('legacy_store',legacy_path,'extractions')]:
+                        if path is not None and Path(path).exists():
+                            db.execute(f'ATTACH DATABASE ? AS {alias}',(str(Path(path).resolve()),))
+                            attached.append((alias,table))
+                db.execute('BEGIN IMMEDIATE')
+                current={r[0] for r in db.execute('SELECT id FROM structured_jobs')}
+                if job is None and current!=set(targets):
+                    raise ValueError('Saved jobs changed; refresh and try again')
+                for target in targets:
+                    for table in ('structured_marking_runs','structured_transcriptions',
+                                  'structured_pages','structured_responses','structured_crops',
+                                  'structured_reviews','structured_issues','structured_issue_reviews'):
+                        db.execute(f'DELETE FROM {table} WHERE job=?',(target,))
+                    db.execute('DELETE FROM structured_jobs WHERE id=?',(target,))
+                if job is None:
+                    # Include any orphaned historical records as part of a full reset.
+                    for table in ('structured_marking_runs','structured_transcriptions','structured_pages',
+                                  'structured_responses','structured_crops','structured_reviews',
+                                  'structured_issues','structured_issue_reviews','structured_sources','teacher_examples'):
+                        db.execute(f'DELETE FROM {table}')
+                    for alias,table in attached:
+                        if db.execute(f"SELECT 1 FROM {alias}.sqlite_master WHERE type='table' AND name=?",(table,)).fetchone():
+                            db.execute(f'DELETE FROM {alias}.{table}')
+                else:
+                    db.execute('DELETE FROM structured_sources WHERE digest NOT IN (SELECT digest FROM structured_jobs)')
+            # VACUUM cannot run inside the deletion transaction. Do not report
+            # a completed deletion as failed just because reclamation is busy.
+            compacted=True
+            try:
+                with self.connect() as db:db.execute('VACUUM')
+                if job is None:
+                    for path in (manifest_path,legacy_path):
+                        if path is not None and Path(path).exists():
+                            with sqlite3.connect(path,timeout=30) as db:db.execute('VACUUM')
+            except sqlite3.OperationalError:
+                compacted=False
+            return dict(deleted_jobs=len(targets),compacted=compacted)

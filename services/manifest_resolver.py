@@ -98,5 +98,5 @@ class ImportedManifestResolver:
     def resolve(self, layout_id, assessment_type, assessment_id):
         saved=self.cache._read(layout_id,assessment_type,assessment_id)
         if saved is None:
-            raise PreparationError('layout-unavailable','Import the manifest downloaded with this answer sheet, then retry failed pages.')
+            raise PreparationError('layout-unavailable',f'Import the manifest for {assessment_type} {assessment_id}, layout {layout_id}, then retry failed pages. The imported manifest must match this exact QR reference.')
         return saved

@@ -27,6 +27,15 @@ def text_value(value, rule):
     for key in ('caseSensitive', 'collapseWhitespace'):
         if type(rule.get(key)) is not bool:
             raise ValueError('text-normalization-policy-required')
+    if rule.get('normalizeListFormatting'):
+        # Only explicit line-start list labels; retain numbers, negation and maths.
+        lines=value.splitlines()
+        pattern=r'^\s*(?:\((?:[ivxlcdm]+|\d+)\)|(?:[ivxlcdm]+|\d+)[.)]|[•])\s+'
+        labelled=[bool(re.match(pattern,line,re.I)) for line in lines if line.strip()]
+        if sum(labelled)>=2:
+            value=re.sub(r'(?im)'+pattern,'__ITEM__',value)
+            value=' and '.join(part.strip().rstrip('.') for part in value.split('__ITEM__') if part.strip())
+        value=value.strip().rstrip('.')
     if rule['collapseWhitespace']:
         value = ' '.join(value.split())
     return value if rule['caseSensitive'] else value.casefold()
@@ -87,7 +96,7 @@ def _mark_question(question, expected, responses, rule):
             raise ValueError('scoring-policy-required')
         allowed = {'version','mode'}
         if rule.get('mode') == 'text-exact':
-            allowed |= {'caseSensitive','collapseWhitespace','rejectUnlisted'}
+            allowed |= {'caseSensitive','collapseWhitespace','rejectUnlisted','normalizeListFormatting'}
         elif rule.get('mode') == 'numeric':
             allowed |= {'tolerance','unit'}
         if not set(rule) <= allowed:

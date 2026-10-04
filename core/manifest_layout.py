@@ -17,7 +17,7 @@ class PreparationError(ValueError):
 
 class LegacySheet(PreparationError):
     def __init__(self):
-        super().__init__("legacy-sheet", "No manifest reference; use the unchanged legacy extraction workflow")
+        super().__init__("legacy-sheet", "No manifest reference. Generate answer sheets with a layout QR and import their matching manifest.")
 
 
 @dataclass(frozen=True)

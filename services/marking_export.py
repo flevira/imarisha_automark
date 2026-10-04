@@ -6,6 +6,49 @@ from pathlib import Path
 import tempfile
 
 
+def matching_label(item):
+    return chr(64+item) if isinstance(item,int) and 1<=item<=26 else str(item)
+
+
+def matching_rows(run,result):
+    return sorted([row for saved in run.get('manifests',[])
+        if saved['document'].get('layoutId')==result.get('layout_id')
+        for page in saved['document'].get('pages',[]) for row in page.get('rows',[])
+        if str(row.get('questionId'))==str(result.get('question_id')) and row.get('kind')=='MATCH'],
+        key=lambda row:row.get('item',0))
+
+
+def extracted_answer(run,result):
+    rows=matching_rows(run,result)
+    parts=[]
+    for index,response in enumerate(result.get('responses',[])):
+        value=response.get('text') or ', '.join(response.get('selected',[])) or '(blank)'
+        prefix=matching_label(rows[index]['item'])+'=' if index<len(rows) else ''
+        parts.append(prefix+value)
+    return '; '.join(parts)
+
+
+def correct_answer(run,result):
+    rows=matching_rows(run,result)
+    if rows:return '; '.join(matching_label(row['item'])+'='+(', '.join(row.get('correctAnswers',[])) or 'Not supplied') for row in rows)
+    # Bubble option IDs are the comparable values for MC/MA, not answer prose.
+    for saved in run.get('manifests',[]):
+        manifest=saved['document']
+        if manifest.get('layoutId')!=result.get('layout_id'):continue
+        for page in manifest.get('pages',[]):
+            for row in page.get('rows',[]):
+                if str(row.get('questionId'))==str(result.get('question_id')) and row.get('kind') in ('MC','MA'):
+                    return ', '.join(row.get('correctAnswers',[])) or 'Not supplied'
+    answers=result.get('reference_answers')
+    if answers is None:
+        for saved in run.get('manifests',[]):
+            manifest=saved['document']
+            if manifest.get('layoutId')!=result['layout_id']:continue
+            question=next((q for q in manifest.get('questions',[]) if q['questionId']==result['question_id']),{})
+            answers=question.get('referenceAnswers',[])
+    return '\n'.join(answers or []) or 'Not supplied'
+
+
 def export_marking_run(run, directory, *, name='Assessment', outdated=False):
     destination = Path(directory).expanduser()
     destination.mkdir(parents=True, exist_ok=True)
@@ -23,15 +66,16 @@ def export_marking_run(run, directory, *, name='Assessment', outdated=False):
              total['resolved_subtotal'], total['review_count']])+'</tr>')
     details = []
     for result in results:
-        responses = '; '.join(response.get('text') or ', '.join(response.get('selected', [])) or '(blank)'
-                              for response in result.get('responses', []))
+        responses = extracted_answer(run,result)
         ai = result.get('ai') or {}
-        explanation = (ai.get('proposal') or {}).get('explanation', '')
+        explanation = ai.get('explanation') or (ai.get('proposal') or {}).get('explanation', '')
+        if result.get('teacher_decision'):
+            explanation='Teacher: '+result['teacher_decision']['reviewer']+'. '+result['teacher_decision'].get('note','')
         if result.get('similarity_estimate') and result['score'] is None:
             estimate=result['similarity_estimate']
             explanation+=f" Similarity suggestion: {estimate['suggested_score']}/{estimate['max_marks']} (not included in totals; teacher review required)."
         details.append('<tr>'+''.join(f'<td>{esc(v)}</td>' for v in
-            [result['student_id'], result['display_number'], responses,
+            [result['student_id'], result['display_number'], correct_answer(run,result), responses,
              result['score'] if result['score'] is not None else 'Pending',
              result['max_marks'], result['reason'], explanation])+'</tr>')
     pending = sum(r['score'] is None for r in results)
@@ -48,7 +92,7 @@ Extraction and teacher review time are not included.</p>
 <p>Unresolved questions: {pending}. Excluded responses: {run.get('excluded_responses',0)}.
 Subtotals include only resolved questions. Excluded-only students have no score.</p>
 <h2>Student results</h2><table><thead><tr><th>Student ID</th><th>Layout</th><th>Final score</th><th>Maximum represented marks</th><th>Resolved subtotal</th><th>Pending questions</th></tr></thead><tbody>{''.join(summaries)}</tbody></table>
-<h2>Question results</h2><table><thead><tr><th>Student ID</th><th>Question</th><th>Reviewed response</th><th>Score</th><th>Maximum</th><th>Reason</th><th>AI explanation</th></tr></thead><tbody>{''.join(details)}</tbody></table>
+<h2>Question results</h2><table><thead><tr><th>Student ID</th><th>Question</th><th>Correct / reference answer</th><th>Extracted answer (reviewed)</th><th>Score</th><th>Maximum</th><th>Reason</th><th>Marking explanation</th></tr></thead><tbody>{''.join(details)}</tbody></table>
 <p>Saved response version: {esc(run['response_digest'])}</p>
 <p>This report contains student responses. The accompanying JSON preserves the saved run, including its manifest and marking decisions. No results have been uploaded to Imarisha.</p></html>'''
     report = folder/'results.html'

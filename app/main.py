@@ -1,6 +1,5 @@
 import flet as ft
-from database.db import init_db
-from app.views.home_view import build_home_view
+from app.views.structured_view import build_structured_view
 
 def main(page: ft.Page) -> None:
     page.title = "Imarisha Automark"
@@ -10,7 +9,6 @@ def main(page: ft.Page) -> None:
     page.theme_mode = ft.ThemeMode.LIGHT
     page.bgcolor = ft.Colors.GREY_50
 
-    init_db()
-    build_home_view(page)
+    build_structured_view(page)
 
 ft.app(target=main)

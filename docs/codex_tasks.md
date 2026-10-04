@@ -468,3 +468,226 @@ Validation: 137 targeted AutoMark tests, 38 frontend PDF tests, and backend layo
 assignment, and topic-storage migration tests passed. This includes a file-import
 through PDF-extraction test with no backend. Service activation is separate;
 no restart or deployment was performed. AI grading accuracy limitations above remain.
+
+### OCR-first written extraction and image inputs (2026-10-03)
+
+Written regions now use this order: visible PDF text when usable, otherwise local
+Tesseract OCR on the saved crop; optional local AI only for missing/uncertain OCR.
+OCR runs by default with no AI checkbox required, including when resuming an older
+capture-only job. Approved responses and successful saved results are retained.
+OCR records include text, engine, language, elapsed seconds, confidence and review
+flags. Confidence is a routing heuristic, not a calibrated correctness score:
+mean token confidence >=80 and no token below45 qualifies as confident only when
+all requested language packs are present. Empty/error/low-confidence outputs remain
+reviewable; failed AI retains usable earlier OCR text. No reference answers enter
+transcription requests. Review approval is still explicit.
+
+The structured source reader and desktop picker now accept PDF, PNG, JPEG, TIFF
+(including multiple frames), BMP and WebP. Images follow the same QR/manifest,
+alignment, bubble and written-region pipeline. Limits: 200 pages/frames, 200 MiB
+source file, 40 megapixels per input image. Original input bytes are retained.
+
+Local test on SIM_3_Completed_Student_Answer_Sheet.pdf extracted all five written
+regions with ordinary OCR and no AI: approximately2.1 seconds overall,0.8 seconds
+OCR. Tesseract reported92–96% mean token confidence; this is not a handwritten
+accuracy benchmark. This Mac currently has English OCR data but no Kiswahili pack;
+requested mixed-language OCR explicitly flags that absence. Tesseract executable
+and corresponding language packs are local runtime requirements (no auto-download).
+
+Validation:88 targeted extraction, handwriting, review and marking tests passed;
+4 OCR/image tests passed, including confident-OCR bypass of AI, resume reuse,
+PNG extraction and multi-frame TIFF input. No service restart, remote push or
+production-job reprocessing was performed for this change.
+
+### Written marking review and side-by-side output (2026-10-03)
+
+- Results and HTML exports show the manifest reference answer beside the reviewed extracted answer. Older saved runs retrieve reference answers from their saved manifest snapshot.
+- The default written comparison tolerates explicit multi-line numbered lists and terminal full stops, alongside case and whitespace normalization. It preserves meaningful numbers and negation; equivalent wording beyond these formatting changes still needs an accepted alternative, optional AI, or teacher decision.
+- Unresolved results offer a teacher mark and optional note. When explicit scoring criteria exist, teachers can select individual marking points and sum their weights before saving. Missing criteria are not invented from lexical similarity.
+- Saving a teacher mark creates a new immutable marking-run version and recalculates totals. Invalid/out-of-range marks, stale results and incomplete extraction reviews are rejected. Original runs remain available as history.
+- Teacher decisions belong to that saved run. Starting a fresh re-mark computes new results; it does not automatically carry teacher overrides forward. Export the latest run after reviewing marks.
+- Regression checks cover list formatting, preserved negation/decimals, mark bounds and version conflicts, total recalculation, and adjacent escaped reference/extracted report cells. Statistical similarity remains advisory and does not enter totals automatically.
+
+### Combined extraction and marking report (2026-10-03)
+
+- One `automark-results-<job-key>.html` per job, exported to Downloads by default using **Export extraction and marking report**. Available before marking and before review is complete.
+- Export again after marking or teacher corrections to atomically replace the same HTML file. No extra JSON file is created by this action; saved marking versions remain in the internal database.
+- Includes extracted/reviewed responses, reference answers (option letters for MC/MA), review status, marks, explanations and student totals. Matching items and written continuations are grouped under their question so its score is shown once.
+- Unmarked results say “Not marked yet”; unresolved marks stay pending. Changed responses make previous scores outdated and hide their totals until re-marking.
+- Verified extraction-only UI export, same-file replacement after marking, and outdated score handling after a response correction. Existing older export folders are not deleted.
+
+### Requested concept count for written partial credit (2026-10-03)
+
+- Explicit enumerative question wording such as “State two negative behaviours” now produces two distinct-concept credit slots when no explicit rubric exists. At five marks, one slot earns 2.5 and both earn five. Reference examples are an acceptable pool, not a requirement to repeat every example.
+- Existing scoring criteria take precedence. Missing counts, multiple count requests and “at least/at most” wording do not generate guidance. Initial parsing supports common English enumerative commands and a limited set of Kiswahili forms; unsupported wording retains the existing review workflow.
+- Local AI receives the slots and must identify distinct valid ideas with student evidence. Duplicate evidence is rejected; synonymous repetitions must not earn separate credit. Semantic distinctness remains a model judgment and needs accuracy testing with teacher-labelled examples.
+- Saved runs record derived criteria/count/source and AI prompt version v3. The UI displays the requested count. Count derivation does not alter extraction, manifest files or existing marks; re-marking applies it.
+- Mocked model regression checks cover two valid concepts/full marks, one/half marks, duplicate evidence, explicit rubric precedence and ambiguous count fallback. Actual model accuracy has not been measured for this change.
+
+- Evidence validation correction: a combined AI summary quote need not be contiguous when each credited criterion has its own verified student-text quote. This resolves numbered-list separators rejecting otherwise valid evidence (observed Q16, run 13). Invented criterion quotes still fail; zero-credit decisions still require valid overall evidence. Regression coverage includes all three cases; validation version recorded as written-marking-v4. Existing saved scores are unchanged until re-marking.
+
+### Multiple PDF/image inputs (2026-10-04)
+
+- Structured extraction accepts multiple PDFs and supported images in one selection (macOS native picker and standard Flet picker). Manual entry accepts one path per line.
+- A batch processes files sequentially, keeping a separate saved job/report per input. Duplicate paths are removed; existing content resumes through the repository's existing source identity logic.
+- A failed file is reported while subsequent files continue. Cancellation stops after the current page/recognition request and skips remaining inputs. Existing single-job Resume/Retry remains available.
+- Regression checks cover mixed PDF/PNG queueing, missing input continuation, duplicate selection, cancellation and native picker path handling. This does not combine separate image files into one multipage student script.
+
+### Repeated student/exam attempts (2026-10-04)
+
+- Different uploaded files/jobs may represent different attempts for the same student and assessment. There is no cross-job student/exam uniqueness restriction.
+- The job ID is exposed as Attempt ID in the review UI, combined HTML and newly saved marking runs. Each attempt keeps independent responses, reviews, scores and report file.
+- Regression check marks two distinct uploads with the same student and exam successfully. Byte-identical uploads still resume their existing job. Repeated copies of the same layout page inside one job remain ambiguous duplicates; this change does not infer attempt boundaries within a combined PDF.
+
+### Batch review, marking and combined report (2026-10-04)
+
+- Saved scripts now have selection checkboxes and Select all scripts. Newly uploaded jobs are selected automatically for the current view; reopening the app requires explicit selection.
+- Approve selected scripts uses saved extraction/transcription values and retains previous decisions. Missing/invalid responses stay pending. Complete selected reviews validates every job separately.
+- Mark selected scripts processes each reviewed attempt independently, honours the current marking policy/local AI choice and question guidance, and reports blocked jobs without aborting the remainder.
+- Marking and Export combined report write one stable HTML file in Downloads (or Batch results folder) for the selected job set, with navigation and a separate section per attempt. Re-exporting the same selection replaces that report. Pending or stale marks remain labelled.
+- UI regression covers blocked unreviewed jobs, multi-script approval/completion/marking, report inclusion and same-file re-export. No existing user approvals or scores are changed merely by installing this change.
+
+### Answer-detail context and incorrect written answers (2026-10-04)
+
+- Confirmed the SIM 3 manifest already supplies answerDetail for all written questions and the local AI receives it as explanatoryNotes. Prompt v5 explicitly uses those notes to clarify intended concepts without adding requirements.
+- Clearly unrelated answers, contradictions and misconceptions should receive zero with quoted student evidence, rather than unresolved. Semantic equivalents remain acceptable; shared words alone are insufficient. Genuine ambiguity remains for teacher review.
+- Marking snapshots now retain question wording and answer details; combined/single job reports show both alongside reference and extracted responses.
+- Regression verifies context delivery and validated zero for a clearly incorrect definition. This tests integration/validation, not actual-model grading accuracy; re-marking is needed to apply updated guidance to saved responses.
+
+### Preserve credit for incomplete but valid concept answers (2026-10-04)
+
+- Observed Q20 model failure: explanation acknowledged one correct tool, but both concept slots were false. Prompt v6 and derived slot descriptions now explicitly assess each slot independently; absence of later concepts must not cancel earlier credit.
+- For derived count-based criteria, application code calculates score/decision from validated credited slots, overriding an inconsistent model aggregate. The original proposal remains in the audit; UI/report show the calculated concept credit.
+- Live local Qwen3 4B check: “A bucket of dry sand.” for the two-tool, five-mark question scored 2.50/5 with one credited concept (about 7.1 seconds). This is one verified example, not a broad accuracy benchmark. Saved production marks were not changed by the test.
+
+### Named concepts, source-segment evidence and written benchmark (2026-10-04)
+
+- Replaced anonymous concept slots and AI-proposed numeric scores with `written-marking-v7`: named requirements, discrete semantic judgments, application-calculated scores and explanations. Model output no longer contains a free-form score or overall explanation that can contradict its concept decisions.
+- Explicit weighted `scoringCriteria` take precedence; optional `acceptedConcepts` (stable IDs, descriptions, accepted alternatives) plus `requiredConceptCount` implement any-N distinct credit. For legacy counted list questions, a conservative split of a single reference list supplies named ideas; ambiguous lists require teacher guidance. No required count is inferred from reference length alone. Credit is capped and rounding happens after proportional calculation.
+- Question wording and reference/accepted answers remain grading inputs. `answerDetail` is retained as background in audit/report, excluded from the scoring request to prevent incidental consequences/examples becoming requirements. Teachers can promote actual requirements into explicit criteria.
+- Evidence uses IDs pointing to saved transcription segments. Unknown IDs, missing evidence, duplicate concept IDs, extra score fields and incomplete model output are rejected. Inferred semantic matches receive a separate focused verification; disputed matches stay uncertain rather than earning unsupported credit.
+- Definitions and other uncounted questions support weighted teacher criteria. Without such criteria, complete semantic equivalents may earn full credit, clearly incorrect responses zero, and partly correct responses require a rubric rather than being collapsed to zero.
+- The existing guidance editor exposes weighted criteria, any-N accepted concepts/variants and count; edits are shared across selected jobs with the same layout. Effective requirements and AI evidence/calculations are saved in marking runs. Production extraction/reviews/scores are not changed by implementation or benchmark runs.
+- Prepared 50 private benchmark cases and proposed teacher-review marks in `artifacts/written-marking-review/` (ignored local artifacts). These are NOT teacher-approved. Q17's primary-contribution wording versus multiple reference activities, and Q18's bare bribery example, need explicit teacher judgement.
+- Evaluator separates teacher-labelled false-zero, over-credit, partial-credit error and unresolved metrics from unapproved drafts. No teacher labels means accuracy counts are unavailable, not zero errors. Use `python -m tools.evaluate_written_marking cases.json output.json --draft-rubrics` only for evaluating proposed rubrics; it does not approve or apply them.
+
+Validation for v7:
+- 73 targeted automated checks passed; 19 UI/report/benchmark checks passed again after the guidance-preview metadata fix.
+- Live 50-case local Qwen3 4B trial with proposed rubrics and match verification: 46 resolved, 4 pending, 199.5 seconds; 44/50 agreed with unapproved proposed marks. Remaining differences include Q17 rubric overlap and treatment of a bare bribery definition. No teacher-labelled accuracy claim is made.
+- Six representative cases using original/default manifest rules (no proposed rubrics): valid Q17/Q18 paraphrases earned 5; one sand bucket earned 2.50; broom/bell earned 0; two cases remained for review. Total about 19 seconds.
+- Review artifact: `artifacts/written-marking-review/teacher-review.html`; raw private cases and local-run audits are beside it. Provisional expected scores remain separate from `expectedScore` and `teacherApproved` is false. Restart and re-mark are required to change user-visible production results; neither was performed automatically.
+
+### Remove legacy desktop extraction (2026-10-04)
+
+- Desktop launch now opens manifest-based extraction/review directly. Removed the legacy home/review screens, unused table control and Back to legacy extraction navigation.
+- Startup no longer initializes the old extraction database. Existing legacy data is retained and remains covered by explicit Reset all AutoMark data; removing the UI does not delete user records.
+- Sheets without a manifest reference now explain that matching layout-QR sheets and manifests are needed, instead of pointing to a removed screen. Older extraction service/CLI utilities remain for compatibility and regression tests, not as desktop entry points.
+
+
+### Use manifest answer details for equivalent wording (2026-10-04)
+
+- `written-marking-v8` passes existing manifest `answerDetail` to both initial semantic grading and focused match verification. Previously v7 retained it only in audit/report. The verification pass also receives question wording so concise responses can rely on the setting/purpose already stated in the question.
+- Details clarify equivalent wording of existing reference concepts; they do not create extra requirements, accepted answers, weights or concepts. Explicit accepted alternatives and criteria retain precedence. No generated synonym guesses are written into imported immutable manifests. Existing concept-level `acceptedAlternatives` continue to reach both passes.
+- Interpretation context is recorded in the marking audit. The importer, original manifest files, OCR/transcription, saved approvals and production marks are unchanged. This changes interpretation of existing manifest data, not the frontend manifest generator or schema. Missing details remain supported.
+- 54 targeted automated tests passed, including manifest detail propagation through marking, both AI requests, fixed concept counts/partial scores, absent details and ambiguous-rubric blocking. `git diff --check` passed.
+- Six-case live local Qwen3 trial with original manifest rules: script 02 Q16 now 5/5; script 06 Q20 remains 2.5/5; script 08 Q20 remains 0/5. Script 02 Q20 remains pending, script 03 Q19 remains under-credited at 2.5/5, and script 05 Q19 incorrectly receives 0 despite one valid theft concept. Context delivery alone does not resolve semantic reliability; explicit concept alternatives and teacher-approved benchmark labels remain necessary. These are observations against provisional expectations, not teacher-validated accuracy.
+- Private trial audit: `artifacts/written-marking-review/local-v8-answer-detail.json`. No production re-mark, restart, remote push or deployment was performed.
+
+
+### Planned: teacher-grounded open-ended marking
+
+Status: future implementation plan, agreed 2026-10-04. The six improvements below are planned work, not a record of completed features.
+
+Teacher-provided correct answers and their full marks are already approved reference examples. They can seed the example bank without another approval step. The principal missing supervision is partial-credit rules and scored partial answers. Teacher approval of a reference answer does not automatically approve AI-generated paraphrases or scores assigned to student responses; transcription approval is also separate from score approval.
+
+Using examples in prompts or retrieval does not train model weights. Fine-tuning remains a later possibility, outside this planned first approach.
+
+#### Six planned improvements
+
+1. **Explicit scoring rubrics — planned.** Use question wording, teacher answers, full marks and answer details to draft named concepts, required counts, accepted alternatives and partial-credit weights. Retain the teacher's original answer. Review newly inferred rules before activation; explanatory details must not silently introduce requirements.
+
+2. **Teacher-grounded example bank — planned.** Seed full-credit examples from teacher answers and maximum marks. Add teacher-scored partial, incorrect and borderline responses as they become available. Record provenance and approval status. Keep AI-generated examples provisional and separate from evaluation answers.
+
+3. **Concept-level semantic marking — planned.** Apply approved deterministic matches first, retrieve relevant scored examples next, and use local AI for unresolved concepts. Calculate marks in application code. Enforce distinct-concept credit, score caps and contradiction rules; similarity alone must not determine marks.
+
+4. **Grouped teacher review — planned.** Group identical reviewed responses to the same question and rubric version. Suggest similar-answer groups for confirmation. Allow a teacher decision to apply to confirmed group members while preserving individual overrides and audit history.
+
+5. **Uncertainty and technical recovery — planned.** Separate extraction uncertainty, semantic ambiguity, missing scoring rules and invalid model output. Use bounded retries for technical failures. Show disputed concepts and affected mark ranges; introduce confidence percentages only after calibration against teacher-scored cases. Mark ranges describe the current concept decisions, not a guarantee of correctness.
+
+6. **Benchmarking and controlled adoption — planned.** Establish approved expected marks for the existing 50-answer benchmark, concentrating teacher input on partial-credit and ambiguous cases. Maintain separate development examples and held-out tests; expand to unseen questions and English/Kiswahili responses. Compare accuracy, review workload and timing before adopting changes.
+
+#### Acceptance criteria for future implementation
+
+- Teacher reference answers receive their declared full marks.
+- For an approved equal-weight two-concept rubric worth five marks, one valid concept earns 2.5; repetition adds no credit.
+- Test equivalent wording, negation, irrelevant additions, clear errors and explanatory details that are not scoring requirements.
+- Cover the observed Q16–Q20 failures, particularly valid theft concepts and concise definitions.
+- Report exact agreement, average score error, false zeros, excessive credit and unresolved rate; measure extraction, marking and human-review time separately.
+- Prevent evaluation-response and score-label leakage into prompts, retrieval or training. The question's teacher reference answer remains a legitimate marking input; copying that answer is a functional check, not evidence of generalisation to unseen student answers.
+- Evaluate held-out answers separately from development examples, including language-specific results. Fewer pending answers alone does not establish improved accuracy.
+
+#### Research and guidance informing the plan
+
+- [ETS: Best Practices for Constructed-Response Scoring](https://www.ets.org/pdfs/about/cr_best_practices.pdf) — established guidance on scoring rubrics, expert-scored examples, quality control and evaluation.
+- [ETS: Evaluations of Automated Scoring Systems in Practice](https://www.ets.org/research/policy_research_reports/publications/report/2020/kbxs.html) — evaluation against quality human ratings and the intended assessment use.
+- [SemEval-2013: Student Response Analysis and Recognizing Textual Entailment](https://aclanthology.org/S13-2045/) — semantic assessment of short responses rather than treating word overlap as correctness.
+- [Language Models are Few-Shot Graders (2025)](https://arxiv.org/abs/2502.13337) — research supporting instructor-graded examples and retrieval-based example selection; benefit must be validated with our local models and target languages.
+- [Gradescope: AI-assisted grading and answer groups](https://guides.gradescope.com/hc/en-us/articles/24838908062093-AI-assisted-grading-and-answer-groups) — an established teacher-controlled grouping workflow; automated grouping support varies by question type.
+- [Confidence Estimation in Automatic Short Answer Grading with LLMs (2026)](https://arxiv.org/abs/2605.00200) — research on combining model signals with graded-response data; model-stated confidence alone is insufficient, and local calibration is still required.
+
+#### Documentation boundaries
+
+This update records future work only. It does not change application code, manifest files, database records or model weights, and does not restart services, commit, push or deploy. Existing implementation history above is preserved; this section clarifies the agreed direction without claiming that earlier experiments established grading accuracy.
+
+### Teacher-grounded marking implementation (2026-10-04)
+
+- Implemented the six-part workflow as local capabilities; teacher approval of partial-credit rules and benchmark labels remains a human step. Teacher reference answers and manifest-approved alternatives supply full-credit examples directly, without duplicating them in every student record or asking for another approval. No model weights are trained.
+- Added draft-only rubric preparation from question wording, teacher reference answers, full marks and answer details. The UI displays proposed concepts, synonyms and allocations for explicit approval before staging them for the next marking run. Original manifests remain immutable. Weighted criteria now support accepted alternatives, alongside existing any-N concept rules. Legacy manifest interpretation remains compatible.
+- Added a local append-only `teacher_examples` table, created idempotently when the repository opens. Saving a teacher mark atomically saves its approved written-answer example and immutable marking-run version. Example scope fingerprints question identity, wording, reference answers, rubric, maximum and scoring rule; changed requirements do not reuse old examples. Latest explicit corrections supersede earlier versions for retrieval while history remains stored. Individual job deletion retains this reusable bank; Reset all AutoMark data removes it.
+- Marking now applies deterministic reference comparison, approved exact example matches and unambiguous explicit concept alternatives before local AI. Concept credit is distinct and capped; unknown clauses and negations do not receive substring-based credit. Relevant approved examples are retrieved using lightweight lexical ranking solely to select prompt examples, never to calculate marks. Reference examples always anchor retrieval; provisional examples are excluded.
+- `written-marking-v9` supplies approved examples and rules to semantic grading. Answer details are reserved for rubric authoring and audit/report context, addressing the v8 background-prose regression. Invalid/incomplete model output receives at most one retry with attempt metadata; genuine uncertainty does not trigger repeated guessing. An uncertain holistic response may omit evidence, but a scored decision must cite valid student segments.
+- Added Review answer groups for checked scripts. Identical answers share a group only within the same question/rule fingerprint. Similarity-based suggestions stay separate and unchecked until the teacher confirms selected members. Teacher scores can correct already-scored answers, not only pending ones. Individual overrides, source text, leading-zero identities and immutable result history are preserved; stale or changed results block application. A group failure reports per-member outcomes rather than claiming all succeeded.
+- UI and HTML reports distinguish extraction, meaning, rubric and technical review reasons. Concept uncertainty includes disputed ideas and a provisional lower/upper mark range, not a confidence percentage. Teacher marking interactions record elapsed review-interface time separately from marking; group time is apportioned across members. This is elapsed interaction time, not a calibrated measure of attention. Unmeasured OCR/extraction-review time remains unavailable.
+- Benchmark tooling now evaluates deterministic grounding before AI and reports exact agreement, scored-answer accuracy, mean absolute mark error, false zeros, over-credit, review rate and language-specific counts. It blocks identical held-out answers supplied as non-reference teaching examples. Development/test split discipline and independent teacher labels are still required; the teacher answer remains legitimate input, not evidence of generalisation.
+
+Validation and limitations:
+
+- 95 targeted tests passed across marking, rubrics, AI, desktop controls, reports, manifest import and saved-data cleanup. New regressions cover approved references, partial credit, repetition, negation, changed scopes, example persistence/reset, stale groups, preserved overrides, draft approval, technical retries, uncertainty ranges and evaluation leakage. No tests start or deploy application services.
+- Six-case local Qwen3 trial: the clear corruption definition, funding/educators and theft/hatred examples earned full marks; one sand bucket earned 2.50; broom/bell earned zero; theft plus helping old people remained pending. About 32.3 seconds; expected outcomes remain provisional.
+- Isolated 50-answer trial with original manifest rules and no newly approved partial-score examples: 41 scored, 9 pending, 203.1 seconds. Accuracy metrics remain null because there are no approved student-score labels. These benchmark inputs are not an exact replay of every production OCR text/line break, so this is not a controlled before/after accuracy claim. English/Kiswahili qualification remains outstanding.
+- Private benchmark output is under `artifacts/written-marking-review/local-v9-full-regression.json`. Remaining cases include ambiguous definitions, irrelevant NGO answers and the valid theft concept alongside an irrelevant answer. The Q17 partial-credit allocations also still require teacher agreement.
+- Existing production jobs, scores and manifests were not changed by tests. No restart, commit, push, deployment, fine-tuning or additional model download was performed. Reopening the app enables the new controls; re-marking is an explicit user action. To establish partial-credit guidance, use Draft rubric from teacher answer, review/approve it, then mark; use Save teacher mark and approved example or Review answer groups to supply actual teacher scores.
+
+
+### Clear unrelated answers receive zero (2026-10-04)
+
+Updated local marking prompt to `written-marking-v10`: understandable but unrelated answers are incorrect (holistic) or not-demonstrated (named concepts), rather than semantically uncertain. Genuine ambiguity remains reviewable; a valid concept retains credit even alongside unrelated content. No blanket conversion of pending results to zero.
+
+The teacher-approved NGO example (roads and selling schoolbooks instead of anti-corruption education) is a zero-credit prompt anchor and opt-in live regression, not a held-out evaluation item. Local Ollama returned 0/5 (`ai-incorrect`) in 4.84 seconds. This verifies the reported case, not general grading accuracy. Existing saved runs are unchanged; re-marking applies the updated prompt. No model weights were trained.
+
+
+### Independent credit in mixed answers (2026-10-04)
+
+`written-marking-v11` adds concept-independence guidance to named-concept classification and semantic verification. The teacher-approved example “Stealing and helping old people” demonstrates theft only: one of two required concepts, earning 2.5/5. A positive activity alongside a valid negative behavior does not negate the valid behavior. Negation of theft still does not earn theft credit, and repetition adds no credit. Holistic classification retains its existing unrelated-answer guidance. These prompt anchors are development regressions, not held-out accuracy evidence. Saved runs are unchanged until re-marked.
+
+
+### List conjunctions as candidate evidence (2026-10-04)
+
+`written-marking-v12` segments “and”-joined candidate items for any-N list rubrics. Both AI passes receive the original student answer for context; segment count never determines credited concept count. Shared negation and recognized compound reference phrases remain intact. Holistic answers retain sentence segmentation. Regression coverage includes the mixed theft/positive-behavior answer, negation, repeated concepts and compound phrases. No saved extraction or marking records are rewritten.
+
+
+### Additional answer list formats (2026-10-04)
+
+`written-marking-v13` extends any-N candidate segmentation to commas, semicolons, Roman-numeral labels, numeric/alphabetic labels and bullets, including inline lists. Decimal and digit-grouping commas remain intact. Shared negation and known compound reference phrases remain in context; holistic prose keeps sentence segmentation. Full student text remains available to both marking passes. Candidate count never grants concept credit automatically. Local regression tests cover these formats; saved results require re-marking to use the change.
+
+
+### Single-pass semantic marking (2026-10-04)
+
+At the user's request, `written-marking-v14` removes the second AI concept-verification request. The first pass still judges each concept against the rubric and cites evidence; application code validates the output and calculates marks. Genuine uncertainty remains pending for individual teacher review. Teacher group review and overrides remain available. Bounded retries for malformed output remain, so technical recovery can still make a second request. Existing audit history and saved scores are preserved. Automated regressions check one successful grading request, partial-credit arithmetic and unresolved-case handling. Live-model validation was not run because the permission request was declined; accuracy and speed improvements are not yet measured on a new run.
+
+Follow-up validation (2026-10-04): the user authorised the previously declined local Ollama checks. All five opt-in live regressions passed with single-pass marking v14 (pytest elapsed 29.61 seconds, including test setup). Cases covered the unrelated NGO answer (0), theft plus helping older people (2.5), helping older people alone (0), negated theft (0), and repeated theft (2.5), each out of five. Saved production results were not changed. This small regression run is not a throughput or general accuracy benchmark.
+
+
+### Matching letter pairs in generated papers and reports (2026-10-04)
+
+The web frontend now labels matching left-hand items A–D on question papers and answer sheets, consistent with existing letter-based answer keys. Numeric manifest item positions and bubble geometry remain unchanged. AutoMark extraction and marking HTML comparisons format matching pairs as A=B, C=D, retaining original positions when placeholders are omitted. Older manifests remain readable; existing exported HTML must be exported again to show the new comparison format. No backend migration, restart or remote push is included.

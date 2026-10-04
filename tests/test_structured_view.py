@@ -57,9 +57,9 @@ def test_ui_worker_yields_to_event_loop_and_cancels(tmp_path,fixture_dir,resolve
     monkeypatch.setattr(view,'run_job',delayed)
     build_structured_view(page,repository)
     assert not any('token' in str(getattr(c,'label','')).lower() or getattr(c,'label',None)=='Staff account ID' for c in descendants(page))
-    find(page,'label','Answer-sheet PDF path').value=str(fixture_dir/'personalized-mixed-text.pdf')
+    find(page,'label','Answer-sheet PDF or image path').value=str(fixture_dir/'personalized-mixed-text.pdf')
     async def scenario():
-        find(page,'text','Create / resume extraction job').on_click(None)
+        find(page,'text','Create / resume extraction jobs').on_click(None)
         for _ in range(100):
             if entered.is_set():break
             await asyncio.sleep(.01)
@@ -81,10 +81,10 @@ def test_macos_pdf_button_selects_and_preserves_path_on_cancel(tmp_path,monkeypa
     page=Page();build_structured_view(page,JobRepository(tmp_path/'jobs.db'))
     async def scenario():
         for _ in range(2):
-            find(page,'text','Choose PDF').on_click(None)
+            find(page,'text','Choose PDFs / images').on_click(None)
             await page.tasks[-1]
-            assert find(page,'label','Answer-sheet PDF path').value=='/tmp/Answer sheets.pdf'
-            assert not find(page,'text','Choose PDF').disabled
+            assert find(page,'label','Answer-sheet PDF or image path').value=='/tmp/Answer sheets.pdf'
+            assert not find(page,'text','Choose PDFs / images').disabled
     asyncio.run(scenario())
 
 
@@ -154,3 +154,115 @@ def test_saved_review_clears_note_and_collapses_history(tmp_path,fixture_dir,res
     assert tiles and all(not tile.initially_expanded for tile in tiles)
     for control in page.controls:
         assert control._build_add_commands()
+
+
+def test_wrapping_rows_do_not_contain_expanded_controls(tmp_path):
+    page=Page();build_structured_view(page,JobRepository(tmp_path/'jobs.db'))
+    for control in descendants(page):
+        if type(control).__name__=='Row' and control.wrap:
+            assert not any(child.expand for child in control.controls)
+    assert not find(page,'label','Downloaded manifest file').expand
+    find(page,'text','Upload manifest')
+
+
+def test_extraction_completion_refreshes_progress_without_ai(tmp_path,fixture_dir,resolver,monkeypatch):
+    import app.views.structured_view as view
+    repo=JobRepository(tmp_path/'jobs.db');page=Page()
+    monkeypatch.setattr(view,'ImportedManifestResolver',lambda *a,**kw:resolver)
+    build_structured_view(page,repo)
+    find(page,'label','Answer-sheet PDF or image path').value=str(fixture_dir/'shared-tf-text.pdf')
+    assert not find(page,'label','Trial local handwriting transcription (all drafts need review)').value
+    async def scenario():
+        find(page,'text','Create / resume extraction jobs').on_click(None)
+        await page.tasks[-1]
+    asyncio.run(scenario())
+    find(page,'value','Extraction complete: 1/1 pages extracted. Response review is a separate step.')
+    assert not any('pages saved · running' in str(getattr(c,'value','')) for c in descendants(page))
+
+
+def test_reopening_saved_job_replaces_stale_counter(tmp_path,fixture_dir,resolver):
+    repo=JobRepository(tmp_path/'jobs.db')
+    job=repo.create(fixture_dir/'personalized-mixed-text.pdf',resolver.scope)
+    run_job(repo,job,resolver)
+    page=Page();build_structured_view(page,repo)
+    find(page,'text','personalized-mixed-text.pdf — review (2 pages)').on_click(None)
+    counter=find(page,'value','Extraction complete: 2/2 pages extracted. Response review is a separate step.')
+    counter.value='2/3 pages saved · running'
+    find(page,'text','personalized-mixed-text.pdf — review (2 pages)').on_click(None)
+    assert counter.value=='Extraction complete: 2/2 pages extracted. Response review is a separate step.'
+
+
+def test_batch_pdf_image_skips_bad_file_and_deduplicates_paths(tmp_path,fixture_dir,resolver,monkeypatch):
+    import app.views.structured_view as view
+    from PIL import Image
+    repository=JobRepository(tmp_path/'jobs.db')
+    image=tmp_path/'scan.png';Image.new('RGB',(100,100),'white').save(image)
+    pdf=fixture_dir/'shared-tf-text.pdf'
+    calls=[]
+    monkeypatch.setattr(view,'ImportedManifestResolver',lambda *a,**kw:resolver)
+    monkeypatch.setattr(view,'run_job',lambda repo,job,*args:calls.append(repo.job(job)['name']))
+    page=Page();view.build_structured_view(page,repository)
+    find(page,'label','Answer-sheet PDF or image path').value='\n'.join(map(str,[pdf,tmp_path/'missing.pdf',image,pdf]))
+    async def run():
+        find(page,'text','Create / resume extraction jobs').on_click(None)
+        await page.tasks[-1]
+    asyncio.run(run())
+    assert calls==[pdf.name,image.name]
+    assert len(repository.jobs())==2
+    assert any('2/3 files processed' in str(getattr(c,'value','')) and 'missing.pdf' in str(c.value) for c in descendants(page))
+
+
+def test_batch_cancel_does_not_start_remaining_files(tmp_path,fixture_dir,resolver,monkeypatch):
+    import app.views.structured_view as view
+    repository=JobRepository(tmp_path/'jobs.db');calls=[]
+    monkeypatch.setattr(view,'ImportedManifestResolver',lambda *a,**kw:resolver)
+    def cancel(repo,job,current_resolver,cancellation,*args):
+        calls.append(job);cancellation.set()
+    monkeypatch.setattr(view,'run_job',cancel)
+    page=Page();view.build_structured_view(page,repository)
+    find(page,'label','Answer-sheet PDF or image path').value='\n'.join(str(fixture_dir/name) for name in ['shared-tf-text.pdf','personalized-mixed-text.pdf'])
+    async def run():
+        find(page,'text','Create / resume extraction jobs').on_click(None)
+        await page.tasks[-1]
+    asyncio.run(run())
+    assert len(calls)==len(repository.jobs())==1
+
+
+def test_macos_picker_returns_multiple_paths(monkeypatch):
+    from app.controls.pdf_picker import choose_macos_pdf
+    import app.controls.pdf_picker as picker
+    def fake(command,**kwargs):
+        assert 'with multiple selections allowed' in ' '.join(command)
+        return SimpleNamespace(returncode=0,stdout='/tmp/first sheet.pdf\n/tmp/scan.png\n\n')
+    monkeypatch.setattr(picker.subprocess,'run',fake)
+    assert choose_macos_pdf()==['/tmp/first sheet.pdf','/tmp/scan.png']
+
+
+def test_batch_review_mark_and_combined_export(tmp_path,fixture_dir,resolver,monkeypatch):
+    import app.views.structured_view as view
+    repository=JobRepository(tmp_path/'jobs.db')
+    for name in ['shared-tf-text.pdf','personalized-mixed-text.pdf']:
+        job=repository.create(fixture_dir/name,resolver.scope)
+        run_job(repository,job,resolver)
+    monkeypatch.setattr(view,'ImportedManifestResolver',lambda *a,**kw:resolver)
+    page=Page();view.build_structured_view(page,repository)
+    find(page,'label','Reviewer name').value='Teacher'
+    find(page,'label','Batch results folder').value=str(tmp_path/'exports')
+    find(page,'label','Use local AI for equivalent written answers and rubric-based partial credit').value=False
+    find(page,'text','Select all scripts').on_click(None)
+    async def action(label):
+        find(page,'text',label).on_click(None)
+        await page.tasks[-1]
+    asyncio.run(action('Mark selected scripts'))
+    assert not any(repository.marking_runs(j['id']) for j in repository.jobs())
+    assert any('BLOCKED' in str(getattr(c,'value','')) for c in descendants(page))
+    asyncio.run(action('Approve selected scripts'))
+    asyncio.run(action('Complete selected reviews'))
+    asyncio.run(action('Mark selected scripts'))
+    assert all(repository.marking_runs(j['id']) for j in repository.jobs())
+    reports=list((tmp_path/'exports').glob('*.html'))
+    assert len(reports)==1
+    text=reports[0].read_text()
+    assert 'shared-tf-text.pdf' in text and 'personalized-mixed-text.pdf' in text
+    asyncio.run(action('Export combined report'))
+    assert list((tmp_path/'exports').glob('*.html'))==reports

@@ -173,3 +173,10 @@ def test_job_integration_persists_a_separate_draft(setup):
     row=next(r for r in repo.responses(job) if r['response'].question_id=='4')
     assert row['response'].raw_text is None and row['transcription']['text']=='12'
     assert repo.job(job)['status']=='review'
+
+
+@pytest.fixture(autouse=True)
+def uncertain_ocr_for_ai_fallback_tests(monkeypatch):
+    from core.local_text_ocr import LocalTextOCR
+    from core.contracts import Transcription, ReadStatus
+    monkeypatch.setattr(LocalTextOCR,'recognize',lambda *a:Transcription(None,ReadStatus.UNCERTAIN,('ocr-no-text',),'tesseract-written-v1'))

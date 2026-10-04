@@ -9,7 +9,8 @@ import numpy as np
 
 from core.structured_extraction import StructuredExtractor
 from core.written_extraction import capture_written
-from services.handwriting_jobs import recognize_job
+from services.handwriting_jobs import recognize_job, ocr_job
+from core.source_document import open_source
 from services.page_preparation import prepare_image
 
 
@@ -49,7 +50,7 @@ def run_job(repository, job, resolver, cancel=None, progress=None, retry_failed=
             return
         repository.status(job,'running')
         try:
-            with fitz.open(stream=repository.source(job),filetype='pdf') as document:
+            with open_source(repository.source(job)) as document:
                 for saved in info['pages']:
                     if cancel.is_set():
                         break
@@ -93,5 +94,7 @@ def run_job(repository, job, resolver, cancel=None, progress=None, retry_failed=
             repository.status(job,'interrupted')
             raise
 
+    if not cancel.is_set():
+        ocr_job(repository,job,language,cancel)
     if recognizer is not None and not cancel.is_set():
         recognize_job(repository,job,recognizer,language,cancel)

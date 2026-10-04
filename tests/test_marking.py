@@ -198,3 +198,58 @@ def test_manifest_identity_failure_leaves_no_partial_run(tmp_path,fixture_dir,re
     with pytest.raises(ValueError,match='does not match'):
         mark_job(repo,job,SimpleNamespace(scope=resolver.scope,resolve=wrong),'Teacher')
     assert repo.marking_runs(job)==[]
+
+
+def test_list_formatting_accepts_reference_but_preserves_meaning():
+    q,row=question('WRITTEN')
+    q['referenceAnswers']=['Buckets filled with dry sand and portable dry chemical fire extinguishers.']
+    rule=dict(TEXT,normalizeListFormatting=True)
+    text='(i) Buckets filled with dry sand.\n(ii) Portable dry chemical fire extinguishers.'
+    assert mark_question(q,[row],[answer(text=text)],rule)['score']=='4'
+    assert mark_question(q,[row],[answer(text=text.replace('filled','not filled'))],rule)['score'] is None
+    from core.marking import text_value
+    assert text_value('1.25 and 2.5',rule)=='1.25 and 2.5'
+
+
+def test_teacher_marks_are_versioned_validated_and_update_totals(tmp_path,fixture_dir,resolver):
+    from services.marking_jobs import apply_teacher_mark
+    repo,job=completed(tmp_path,fixture_dir,resolver)
+    run=mark_job(repo,job,resolver,'Teacher')
+    r=run['results'][0]
+    args=(repo,job,run['sequence'],r['student_id'],r['layout_id'],r['question_id'])
+    for invalid in ['-1','999','NaN','0.001']:
+        with pytest.raises(ValueError):apply_teacher_mark(*args,invalid,'Teacher')
+    seq=apply_teacher_mark(*args,'1.5','Teacher','One marking point earned')
+    latest,old=repo.marking_runs(job)
+    assert latest['sequence']==seq and latest['parent_run']==run['sequence']
+    assert latest['results'][0]['score']=='1.5'
+    assert latest['results'][0]['teacher_decision']['reviewer']=='Teacher'
+    assert old['results']==run['results']
+    assert Decimal(latest['totals'][0]['score'])==sum(Decimal(x['score']) for x in latest['results'])
+    with pytest.raises(ValueError,match='Results changed'):apply_teacher_mark(*args,'1','Teacher')
+    row=repo.responses(job)[0]
+    repo.review(job,row['id'],action='approve',student='00530',selected=['A'],reviewer='Teacher',expected_sequence=row['review']['sequence'])
+    with pytest.raises(ValueError):
+        apply_teacher_mark(repo,job,seq,r['student_id'],r['layout_id'],r['question_id'],'1','Teacher')
+
+
+def test_same_student_exam_in_separate_jobs_can_both_be_marked(tmp_path,fixture_dir,resolver):
+    import fitz
+    repo,first=completed(tmp_path,fixture_dir,resolver)
+    # A distinct upload with identical page content represents another attempt.
+    second_pdf=tmp_path/'second-attempt.pdf'
+    with fitz.open(fixture_dir/'personalized-mixed-text.pdf') as doc:
+        doc.set_metadata({'title':'Second attempt'})
+        doc.save(second_pdf)
+    second=repo.create(second_pdf,resolver.scope)
+    assert second!=first
+    run_job(repo,second,resolver)
+    for row in repo.responses(second):
+        repo.review(second,row['id'],action='approve',student='00530',
+                    selected=list(row['response'].selected_options),reviewer='Teacher')
+    repo.complete(second)
+    a=mark_job(repo,first,resolver,'Teacher')
+    b=mark_job(repo,second,resolver,'Teacher')
+    assert a['attempt_id']==first and b['attempt_id']==second
+    assert a['totals'][0]['student_id']==b['totals'][0]['student_id']=='00530'
+    assert len(repo.marking_runs(first))==len(repo.marking_runs(second))==1

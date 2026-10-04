@@ -81,11 +81,14 @@ def mark_job(repository, job, resolver, reviewer, policy=None, assistant=None):
             qs={q['questionId']:q for q in known[layout_id].get('questions',[])}
             for qid,context in entries.items():
                 if (qid not in qs or qs[qid]['responseType']!='WRITTEN' or not isinstance(context,dict)
-                        or not set(context)<={'questionText','scoringCriteria'}):
+                        or not set(context)<={'questionText','scoringCriteria','acceptedConcepts','requiredConceptCount'}):
                     raise ValueError('Invalid written question context')
                 if not isinstance(context.get('questionText'),str) or not context['questionText'].strip():
                     raise ValueError('Supply the original question wording for written criteria')
-                validate_criteria(dict(qs[qid],**context))
+                from core.written_rubric import prepare_rubric
+                prepare_rubric(dict(qs[qid],**context))
+        previous_runs=repository.marking_runs(job)
+        previous_marks={(r['student_id'],r['layout_id'],r['question_id']):r for r in (previous_runs[0]['results'] if previous_runs else []) if r.get('teacher_decision')}
         results, totals, ai_cache = [], [], {}
         for (key, student), group in groups.items():
             manifest = manifests[key]
@@ -102,6 +105,9 @@ def mark_job(repository, job, resolver, reviewer, policy=None, assistant=None):
             student_results = []
             for question in questions:
                 question=dict(question,**contexts.get(manifest['layoutId'],{}).get(question['questionId'],{}))
+                if question['responseType']=='WRITTEN':
+                    from core.concept_criteria import with_concept_criteria
+                    question=with_concept_criteria(question)
                 qid = question['questionId']
                 expected = sorted(geometry[qid],key=lambda r:(r.get('order', r.get('item', 0)),r['pageNumber']))
                 if any(r['number'] != question['displayNumber'] for r in expected):
@@ -116,9 +122,22 @@ def mark_job(repository, job, resolver, reviewer, policy=None, assistant=None):
                 if rule is None and isinstance(manifest.get('scoringPolicy'), dict):
                     rule = manifest['scoringPolicy']
                 if rule is None and manifest.get('scoringPolicy') in (None,'ASSESSMENT_POLICY_REQUIRED'):
-                    rule=(dict(version=1,mode='text-exact',caseSensitive=False,collapseWhitespace=True)
+                    rule=(dict(version=1,mode='text-exact',caseSensitive=False,collapseWhitespace=True,normalizeListFormatting=True)
                           if question['responseType']=='WRITTEN' else dict(version=1,mode='partial'))
+                from core.teacher_grounding import question_scope, reference_examples, approved_match, explicit_concept_match, uncertainty
+                scope=question_scope(question,rule)
+                examples=repository.examples(scope) if question['responseType']=='WRITTEN' else []
+                question=dict(question,approvedExamples=examples)
                 result = mark_question(question,expected,answers,rule)
+                previous=previous_marks.get((student,key[2],qid))
+                if previous and previous.get('example_scope')==scope and previous.get('responses')==[r for r in answers if r is not None]:
+                    result.update(score=previous['score'],status='scored',reason='teacher-mark',engine='teacher',teacher_decision=previous['teacher_decision'])
+                if result['reason']=='unlisted-wording-needs-review':
+                    text='\n'.join(r['text'] for r in answers)
+                    grounded=approved_match(text,reference_examples(question)+examples) or explicit_concept_match(question,text)
+                    if grounded:
+                        result.update(grounded,engine='teacher-grounded-v1')
+
                 if result['reason']=='unlisted-wording-needs-review':
                     from core.answer_similarity import suggest_partial_mark
                     result['similarity_estimate']=suggest_partial_mark(question,'\n'.join(r['text'] for r in answers))
@@ -145,9 +164,10 @@ def mark_job(repository, job, resolver, reviewer, policy=None, assistant=None):
                                 result['reason']='ai-invalid-score'
                         else:
                             result['reason']=assistance.get('reason','ai-unresolved')
-                result.update(student_id=student,layout_id=key[2],layout_version=key[3],
+                result['uncertainty']=uncertainty(result)
+                result.update(example_scope=scope,scoring_question={k:v for k,v in question.items() if k!='approvedExamples'},student_id=student,layout_id=key[2],layout_version=key[3],
                               assessment_type=key[0],assessment_id=key[1],assessment_group_id=key[4],
-                              manifest_digest=digest(manifest),rule=rule,
+                              manifest_digest=digest(manifest),rule=rule,question_text=question.get('questionText'),answer_detail=question.get('answerDetail'),concept_count=question.get('conceptCount'),criteria_source=question.get('criteriaSource'),reference_answers=question.get('referenceAnswers',[]),scoring_criteria=question.get('scoringCriteria',[]),marking_rubric=question.get('markingRubric'),
                               responses=[r for r in answers if r is not None])
                 results.append(result); student_results.append(result)
             resolved = all(r['status'] == 'scored' for r in student_results)
@@ -156,7 +176,7 @@ def mark_job(repository, job, resolver, reviewer, policy=None, assistant=None):
                                score=score_sum(student_results) if resolved else None,
                                resolved_subtotal=score_sum(student_results),
                                review_count=sum(r['status'] != 'scored' for r in student_results)))
-        result = dict(engine=ENGINE,reviewer=reviewer.strip(),policy=policy,
+        result = dict(engine=ENGINE,attempt_id=job,reviewer=reviewer.strip(),policy=policy,
                       response_digest=digest(snapshot),response_snapshot=snapshot,
                       manifests=[dict(digest=digest(m),document=m) for m in manifests.values()],
                       results=results,totals=totals,document_issues=repository.issues(job),
@@ -165,3 +185,42 @@ def mark_job(repository, job, resolver, reviewer, policy=None, assistant=None):
                       marking_seconds=time.perf_counter()-started,review_seconds=None)
         sequence = repository.save_marking_run(job,result)
         return dict(sequence=sequence,**result)
+
+
+def apply_teacher_mark(repository,job,sequence,student,layout,qid,score,reviewer,note='', *, save_example=True, review_seconds=None):
+    """Create a new immutable result version; never modify the original run."""
+    import copy
+    from core.marking import decimal
+    if not reviewer.strip():raise ValueError('Enter Reviewer name before saving a mark')
+    with repository.lock(job):
+        if repository.job(job)['status']!='complete':
+            raise ValueError('Complete extraction review before saving a mark')
+        runs=repository.marking_runs(job)
+        if not runs or runs[0]['sequence']!=sequence:raise ValueError('Results changed; reopen the latest run')
+        run=copy.deepcopy(runs[0])
+        if run['response_digest']!=digest(response_snapshot(repository,job)):
+            raise ValueError('Responses changed; complete review and re-mark first')
+        result=next((r for r in run['results'] if (r['student_id'],r['layout_id'],r['question_id'])==(student,layout,qid)),None)
+        if result is None:raise ValueError('Question result not found')
+        value=decimal(score)
+        if not 0<=value<=decimal(result['max_marks']) or value.as_tuple().exponent < -2:
+            raise ValueError('Enter a mark between zero and the maximum, with up to two decimal places')
+        result.update(score=str(value),status='scored',reason='teacher-mark',engine='teacher',uncertainty=None,
+                      teacher_decision=dict(reviewer=reviewer.strip(),note=note,previous_score=result['score']))
+        for total in run['totals']:
+            rr=[r for r in run['results'] if (r['student_id'],r['layout_id'])==(total['student_id'],total['layout_id'])]
+            pending=sum(r['status']!='scored' for r in rr)
+            total.update(review_count=pending,status='review' if pending else 'scored',
+                         resolved_subtotal=score_sum(rr),score=None if pending else score_sum(rr))
+        run.pop('sequence',None);run.pop('created',None)
+        run.update(parent_run=sequence,reviewer=reviewer.strip(),operation='teacher-mark')
+        if review_seconds is not None:
+            duration=decimal(review_seconds)
+            if duration<0:raise ValueError('Invalid review duration')
+            run['review_seconds']=float(decimal(run.get('review_seconds') or 0)+duration)
+            run['review_timing_method']='elapsed-review-interface-time'
+        example=None
+        if save_example and result.get('example_scope') and result.get('scoring_question',{}).get('responseType')=='WRITTEN':
+            text='\n'.join(r.get('text','') for r in result['responses'])
+            if text.strip():example=dict(scope=result['example_scope'],text=text,score=str(value),reviewer=reviewer.strip())
+        return repository.save_marking_run(job,run,example=example)

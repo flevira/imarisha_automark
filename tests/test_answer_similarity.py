@@ -20,3 +20,14 @@ def test_evaluation_distinguishes_unlabelled_trials_from_teacher_scores():
     result=evaluate([dict(question=q,studentAnswer='water'),
                      dict(question=q,studentAnswer='water',expectedScore='2')],Assistant())
     assert result['count']==2 and result['teacher_labelled']==1 and result['matches_expected']==1
+
+
+def test_provisional_marks_not_counted_as_teacher_accuracy():
+    from tools.evaluate_written_marking import evaluate
+    class Assistant:
+        def assess(self,q,text):return dict(status='scored',score='0',seconds=0)
+    q=dict(referenceAnswers=['water'],maxMarks=5)
+    result=evaluate([dict(question=q,studentAnswer='maji',expectedScore='5',teacherApproved=False,proposedScore='5')],Assistant())
+    assert result['teacher_labelled']==0 and result['false_zeros'] is None
+    approved=evaluate([dict(question=q,studentAnswer='maji',expectedScore='5',teacherApproved=True)],Assistant())
+    assert approved['false_zeros']==1

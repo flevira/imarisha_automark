@@ -23,7 +23,7 @@ def score_sum(results):
         return str(sum((Decimal(r['score']) for r in results if r['score'] is not None),Decimal(0)))
 
 
-def mark_job(repository, job, resolver, reviewer, policy=None, assistant=None):
+def mark_job(repository, job, resolver, reviewer, policy=None, assistant=None, progress=None):
     """Use manifest keys with the user-agreed partial-credit fallback.
 
     {version:1, structured:'all-or-nothing', written:{questionId:rule}}
@@ -90,6 +90,15 @@ def mark_job(repository, job, resolver, reviewer, policy=None, assistant=None):
         previous_runs=repository.marking_runs(job)
         previous_marks={(r['student_id'],r['layout_id'],r['question_id']):r for r in (previous_runs[0]['results'] if previous_runs else []) if r.get('teacher_decision')}
         results, totals, ai_cache = [], [], {}
+        total_questions=sum(len(manifests[key]['questions']) for key,student in groups)
+        resumed_questions=0;checkpoint_seconds=0
+        # Exact input identity prevents old marks surviving response/rubric/example changes.
+        run_identity=dict(version='marking-checkpoint-v1-written-v15',snapshot=digest(snapshot),
+                          policy=policy,reviewer=reviewer.strip(),engine=ENGINE,
+                          assistant=type(assistant).__qualname__ if assistant else None,
+                          model=getattr(getattr(assistant,'client',None),'model',None),
+                          weights=assistant.checkpoint_identity() if hasattr(assistant,'checkpoint_identity') else None)
+
         for (key, student), group in groups.items():
             manifest = manifests[key]
             questions = manifest.get('questions', [])
@@ -128,6 +137,19 @@ def mark_job(repository, job, resolver, reviewer, policy=None, assistant=None):
                 scope=question_scope(question,rule)
                 examples=repository.examples(scope) if question['responseType']=='WRITTEN' else []
                 question=dict(question,approvedExamples=examples)
+                checkpoint_key=digest(dict(run=run_identity,manifest=manifest,student=student,
+                                           question=question,answers=answers,rule=rule,
+                                           previous=previous_marks.get((student,key[2],qid))))
+                cached=repository.marking_checkpoint(job,checkpoint_key)
+                if cached:
+                    result=cached['result'];checkpoint_seconds+=cached['seconds'];resumed_questions+=1
+                    results.append(result);student_results.append(result)
+                    if progress:progress(dict(completed=len(results),total=total_questions,student=student,
+                                              question=question['displayNumber'],resumed=resumed_questions))
+                    continue
+                question_started=time.perf_counter()
+                if progress:progress(dict(completed=len(results),total=total_questions,student=student,
+                                          question=question['displayNumber'],resumed=resumed_questions))
                 result = mark_question(question,expected,answers,rule)
                 previous=previous_marks.get((student,key[2],qid))
                 if previous and previous.get('example_scope')==scope and previous.get('responses')==[r for r in answers if r is not None]:
@@ -169,7 +191,11 @@ def mark_job(repository, job, resolver, reviewer, policy=None, assistant=None):
                               assessment_type=key[0],assessment_id=key[1],assessment_group_id=key[4],
                               manifest_digest=digest(manifest),rule=rule,question_text=question.get('questionText'),answer_detail=question.get('answerDetail'),concept_count=question.get('conceptCount'),criteria_source=question.get('criteriaSource'),reference_answers=question.get('referenceAnswers',[]),scoring_criteria=question.get('scoringCriteria',[]),marking_rubric=question.get('markingRubric'),
                               responses=[r for r in answers if r is not None])
+                repository.save_marking_checkpoint(job,checkpoint_key,
+                    dict(result=result,seconds=time.perf_counter()-question_started))
                 results.append(result); student_results.append(result)
+                if progress:progress(dict(completed=len(results),total=total_questions,student=student,
+                                          question=question['displayNumber'],resumed=resumed_questions))
             resolved = all(r['status'] == 'scored' for r in student_results)
             totals.append(dict(student_id=student,layout_id=key[2],assessment_type=key[0],assessment_group_id=key[4],
                                status='scored' if resolved else 'review',
@@ -182,7 +208,8 @@ def mark_job(repository, job, resolver, reviewer, policy=None, assistant=None):
                       results=results,totals=totals,document_issues=repository.issues(job),
                       excluded_responses=sum(r['review']['action']=='exclude' for r in rows),
                       ai_seconds=sum(r.get('ai',{}).get('seconds',0) for r in results),
-                      marking_seconds=time.perf_counter()-started,review_seconds=None)
+                      marking_seconds=time.perf_counter()-started+checkpoint_seconds,
+                      resumed_questions=resumed_questions,review_seconds=None)
         sequence = repository.save_marking_run(job,result)
         return dict(sequence=sequence,**result)
 

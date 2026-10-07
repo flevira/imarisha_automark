@@ -266,3 +266,42 @@ def test_batch_review_mark_and_combined_export(tmp_path,fixture_dir,resolver,mon
     assert 'shared-tf-text.pdf' in text and 'personalized-mixed-text.pdf' in text
     asyncio.run(action('Export combined report'))
     assert list((tmp_path/'exports').glob('*.html'))==reports
+
+
+def test_batch_approval_missing_selection_has_visible_notification(tmp_path):
+    import flet as ft
+    repo=JobRepository(tmp_path/'jobs.db');page=Page();build_structured_view(page,repo)
+    async def click():
+        find(page,'text','Approve selected scripts').on_click(None)
+        await asyncio.gather(*page.tasks)
+    asyncio.run(click())
+    snack=next(c for c in page.overlay if isinstance(c,ft.SnackBar))
+    assert snack.open
+    assert 'Select scripts' in snack.content.value
+    assert sum(getattr(c,'value',None)==snack.content.value for c in descendants(page))>=2
+
+
+def test_ai_page_parallelism_is_explicit_and_passed_to_worker(tmp_path,fixture_dir,resolver,monkeypatch):
+    import app.views.structured_view as view
+    repo=JobRepository(tmp_path/'jobs.db');page=Page();received=[]
+    monkeypatch.setattr(view,'ImportedManifestResolver',lambda *a,**kw:resolver)
+    actual=view.run_job
+    def worker(repository,job,resolver,cancel,progress,retry,recognizer,language,workers,recognition_progress):
+        received.append((recognizer,workers))
+        actual(repository,job,resolver,cancel,progress,retry,None,language)
+        summary=dict(completed=2,total=2,wall_seconds=1.25,reduced_to_serial=False)
+        recognition_progress(summary)
+        return summary
+    monkeypatch.setattr(view,'run_job',worker)
+    build_structured_view(page,repo)
+    dropdown=find(page,'label','AI transcription pages at once')
+    assert dropdown.value=='1'
+    dropdown.value='2'
+    find(page,'label','Trial local handwriting transcription (all drafts need review)').value=True
+    find(page,'label','Answer-sheet PDF or image path').value=str(fixture_dir/'shared-tf-text.pdf')
+    async def scenario():
+        find(page,'text','Create / resume extraction jobs').on_click(None)
+        await page.tasks[-1]
+    asyncio.run(scenario())
+    assert received[0][0] is not None and received[0][1]==2
+    assert any('AI transcription: 2 answers saved in 1.2s elapsed' in str(getattr(c,'value','')) for c in descendants(page))

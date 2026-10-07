@@ -28,6 +28,8 @@ def build_structured_view(page: ft.Page, repository=None):
     handwriting=ft.Checkbox(label='Trial local handwriting transcription (all drafts need review)',value=False)
     model=ft.TextField(label='Installed local vision model',value='gemma3:4b-it-q4_K_M',width=350)
     language=ft.Dropdown(label='OCR / handwriting language',value='en-sw',width=220,options=[ft.dropdown.Option('en','English'),ft.dropdown.Option('sw','Kiswahili'),ft.dropdown.Option('en-sw','English and Kiswahili')])
+    recognition_workers=ft.Dropdown(label='AI transcription pages at once',value='1',width=300,
+        options=[ft.dropdown.Option('1','1 — sequential'),ft.dropdown.Option('2','2 — parallel trial')])
     reviewer=ft.TextField(label='Reviewer name',width=240)
     marking_policy=ft.Dropdown(label='Structured marking policy',value='manifest',width=450,options=[
         ft.dropdown.Option('manifest','Manifest answers with partial credit'),
@@ -50,9 +52,15 @@ def build_structured_view(page: ft.Page, repository=None):
     active_job=None
     review_page=1
 
+    notification_text=ft.Text('')
+    notification=ft.SnackBar(content=notification_text,duration=8000)
+    page.overlay.append(notification)
+
     def notify(text):
         message.value=text
         job_message.value=text
+        notification_text.value=text
+        notification.open=True
         page.update()
 
     def resolver(job=None):
@@ -429,6 +437,21 @@ def build_structured_view(page: ft.Page, repository=None):
             draft_label=(f"Draft from {draft['engine']} ({draft['seconds']:.1f}s): {draft.get('text') or 'No transcription'} — teacher review required. "+', '.join(draft['review_reasons'])) if draft else 'No OCR or AI text saved.'
             history=[ft.Text(f"{h['created']} · {h['reviewer']} · {h['action']} · student {h['student']} · {h.get('raw_text') if h.get('raw_text') is not None else h['selected']} · {h['note']}")
                      for h in repository.review_history(job,row['id'])]
+            if draft and draft.get('engine')=='trocr-written-v1':
+                if 'ocr-unavailable' in draft.get('review_reasons',[]):
+                    draft_label+=' TrOCR is unavailable. Install its dependencies and run python -m tools.prepare_trocr once to download the local model.'
+                if 'ocr-language-unvalidated' in draft.get('review_reasons',[]):
+                    draft_label+=' This TrOCR model is trained on English handwriting; Kiswahili accuracy is unvalidated.'
+            if draft and 'ocr-language-pack-missing' in draft.get('review_reasons',[]):
+                draft_label=draft_label.replace('ocr-language-pack-missing','').rstrip(' ,')
+                draft_label+=' Configuration warning: a requested OCR language pack is missing; this alone does not indicate unreadable text.'
+            if draft and draft.get('engine')=='paddle-trocr-agreement-v1':
+                if draft['status']=='read':
+                    draft_label+=' PaddleOCR corroborated the TrOCR reading; no Gemma transcription is needed.'
+                elif 'paddle-unavailable' in draft.get('review_reasons',[]):
+                    draft_label+=' PaddleOCR is unavailable. Install requirements-paddle.txt and run python -m tools.prepare_paddle. Optional AI fallback remains available.'
+                else:
+                    draft_label+=' PaddleOCR did not corroborate this reading; the TrOCR text is retained for review or optional AI fallback.'
             original=ft.Text(f"Original extraction: {raw.student_id or 'unknown student'} / {', '.join(raw.selected_options) or raw.raw_text or raw.status.value} · {', '.join(raw.review_reasons) or 'clear'}")
             audit_controls=[original]
             if written is not None:
@@ -464,7 +487,7 @@ def build_structured_view(page: ft.Page, repository=None):
         try:
             inputs=[job] if job else list(dict.fromkeys(p.strip() for p in (source.value or '').splitlines() if p.strip()))
             if not inputs:raise ValueError('Choose at least one PDF or image')
-            failures=[];saved=0
+            failures=[];saved=0;recognition_summaries=[]
             for index,item in enumerate(inputs,1):
                 if cancellation.is_set():break
                 try:
@@ -475,22 +498,40 @@ def build_structured_view(page: ft.Page, repository=None):
                     selected_jobs.add(current_job)
                     from core.handwriting import OllamaHandwritingRecognizer
                     recognizer=OllamaHandwritingRecognizer(model.value.strip()) if handwriting.value else None
-                    task=asyncio.create_task(asyncio.to_thread(run_job,repository,current_job,current_resolver,cancellation,None,retry,recognizer,language.value))
+                    recognition_state={}
+                    task=asyncio.create_task(asyncio.to_thread(run_job,repository,current_job,current_resolver,cancellation,None,retry,recognizer,language.value,int(recognition_workers.value),recognition_state.update))
                     while not task.done():
                         info=await asyncio.to_thread(repository.job,current_job)
                         done=sum(p['status']!='pending' for p in info['pages'])
-                        progress.value=f"File {index}/{len(inputs)} · {info['name']} · {done}/{info['total']} pages saved · {info['status']}. Cancellation stops after the current page or recognition request and skips remaining files."
+                        progress.value=f"File {index}/{len(inputs)} · {info['name']} · {done}/{info['total']} pages saved · {info['status']}. Cancellation saves in-flight work and skips remaining files."
+                        if recognition_state:
+                            state=dict(recognition_state)
+                            progress.value+=f" AI: {state.get('completed',0)}/{state.get('total',0)} answers saved; active pages {state.get('active_pages',[])}; elapsed {state.get('wall_seconds',0):.1f}s."
+                            if state.get('reduced_to_serial'):progress.value+=' Using one page after an inference failure.'
                         page.update()
                         await asyncio.sleep(.25)
-                    await task
+                    recognition_summary=await task
+                    if recognition_summary:
+                        info=await asyncio.to_thread(repository.job,current_job)
+                        progress.value=f"{info['name']} · AI {recognition_summary['completed']}/{recognition_summary['total']} answers saved in {recognition_summary['wall_seconds']:.1f}s."
+                        recognition_summaries.append(recognition_summary)
+                        page.update()
                     saved+=1
                 except Exception as exc:
                     failures.append(f'{Path(item).name}: {exc}')
             message.value=f'{saved}/{len(inputs)} files processed. Review saved jobs below.'
+            if recognition_summaries:
+                ai_saved=sum(s['completed'] for s in recognition_summaries)
+                ai_seconds=sum(s['wall_seconds'] for s in recognition_summaries)
+                message.value+=f' AI transcription: {ai_saved} answers saved in {ai_seconds:.1f}s elapsed across files.'
+                if any(s['reduced_to_serial'] for s in recognition_summaries):
+                    message.value+=' Reduced to one page after an inference failure.'
             if cancellation.is_set():message.value+=' Batch cancelled; resume the current job or select remaining files to continue.'
             if failures:message.value+=' Errors: '+'; '.join(failures)
+            if not saved:progress.value='No files completed. Check the error message below.'
         except Exception as exc:
             message.value=str(exc)
+            progress.value='Extraction did not start.'
         finally:
             running=False; controls.disabled=False; details.disabled=False; cancel_button.disabled=True
             if active_job:
@@ -542,10 +583,11 @@ def build_structured_view(page: ft.Page, repository=None):
             current_resolver=resolver(job)
             from core.ai_marking import LocalMarkingAssistant
             assistant=LocalMarkingAssistant(marking_model.value.strip()) if ai_marking.value else None
-            task=asyncio.create_task(asyncio.to_thread(mark_job,repository,job,current_resolver,reviewer.value,policy,assistant))
+            marking_progress={}
+            task=asyncio.create_task(asyncio.to_thread(mark_job,repository,job,current_resolver,reviewer.value,policy,assistant,marking_progress.update))
             elapsed=0
             while not task.done():
-                progress.value=f'Marking saved responses · {elapsed:.0f}s. Local AI checks only unresolved written answers.'
+                progress.value=(f"Marking {marking_progress.get('completed',0)}/{marking_progress.get('total','?')} questions · student {marking_progress.get('student','')} · Q{marking_progress.get('question','')} · {elapsed:.0f}s · {marking_progress.get('resumed',0)} restored from saved progress.")
                 page.update()
                 await asyncio.sleep(.25);elapsed+=.25
             result=await task
@@ -562,9 +604,13 @@ def build_structured_view(page: ft.Page, repository=None):
         if running:return
         jobs=sorted(selected_jobs)
         if not jobs:
-            notify('Select scripts using the checkboxes or Select all scripts.');return
+            batch_message.value='Select scripts using the checkboxes or Select all scripts.'
+            notify(batch_message.value);return
         if action!='export' and not (reviewer.value or '').strip():
-            notify('Enter Reviewer name before batch review or marking.');return
+            reviewer.error_text='Required to save review decisions'
+            batch_message.value='Enter Reviewer name before batch review or marking.'
+            notify(batch_message.value);return
+        reviewer.error_text=None
         running=True;controls.disabled=True;details.disabled=True;batch_controls.disabled=True
         refresh_jobs();page.update()
         outcomes=[]
@@ -582,7 +628,15 @@ def build_structured_view(page: ft.Page, repository=None):
                         elif action=='complete':
                             await asyncio.to_thread(repository.complete,job);outcome='Review complete'
                         else:
-                            result=await asyncio.to_thread(mark_job,repository,job,resolver(job),reviewer.value,policy_for(job),assistant)
+                            marking_progress={}
+                            task=asyncio.create_task(asyncio.to_thread(mark_job,repository,job,resolver(job),reviewer.value,policy_for(job),assistant,marking_progress.update))
+                            while not task.done():
+                                batch_message.value=(f"Marking script {index}/{len(jobs)} · {name} · "
+                                    f"{marking_progress.get('completed',0)}/{marking_progress.get('total','?')} questions · "
+                                    f"student {marking_progress.get('student','')} · Q{marking_progress.get('question','')} "
+                                    f"· {marking_progress.get('resumed',0)} restored")
+                                page.update();await asyncio.sleep(.25)
+                            result=await task
                             pending=sum(t['review_count'] for t in result['totals'])
                             outcome=f'Marked; {pending} questions need marking review'
                         outcomes.append(name+': '+outcome)
@@ -628,8 +682,9 @@ def build_structured_view(page: ft.Page, repository=None):
     choose_button=ft.OutlinedButton('Choose PDFs / images',on_click=lambda _: page.run_task(choose_pdf))
     cancel_button=ft.OutlinedButton('Cancel after current page',disabled=True,on_click=lambda _: cancellation.set())
     controls=ft.Column([
-        manifest_path,ft.Row([ft.OutlinedButton('Upload manifest',on_click=lambda _:page.run_task(choose_manifest)),ft.OutlinedButton('Import manifest path',on_click=lambda _:import_manifest(manifest_path.value))],wrap=True),handwriting,ft.Row([model,language],wrap=True),reviewer,marking_policy,
-        ft.Text('Local OCR runs automatically for scanned written answers. The handwriting checkbox enables optional AI fallback for missing or uncertain OCR text.'),
+        manifest_path,ft.Row([ft.OutlinedButton('Upload manifest',on_click=lambda _:page.run_task(choose_manifest)),ft.OutlinedButton('Import manifest path',on_click=lambda _:import_manifest(manifest_path.value))],wrap=True),handwriting,ft.Row([model,language,recognition_workers],wrap=True),reviewer,marking_policy,
+        ft.Text('Two-page mode processes uncertain answer crops from separate pages of the same student. Speed depends on local model capacity; start with a small trial.'),
+        ft.Text('Microsoft TrOCR reads scanned written answers one line at a time. The handwriting checkbox enables optional AI fallback for missing or uncertain OCR text.'),
         ft.Text('Partial credit: equal credit per matching item; multiple-answer credit subtracts wrong selections, with a minimum of zero. Scores round to two decimals. Written reference matches ignore case and extra whitespace.'),ai_marking,marking_model,
         ft.Row([source,choose_button]),
         ft.ElevatedButton('Create / resume extraction jobs',on_click=lambda _: launch()),

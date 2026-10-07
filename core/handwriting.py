@@ -3,6 +3,7 @@ import base64
 import ipaddress
 import json
 import time
+import threading
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import Request, build_opener, ProxyHandler, HTTPRedirectHandler
@@ -34,6 +35,7 @@ class OllamaHandwritingRecognizer:
             raise ValueError('Invalid model or timeout')
         self.model,self.endpoint,self.timeout=model,endpoint.rstrip('/'),timeout
         self.model_digest=None
+        self._verification_lock=threading.Lock()
         self._verified=False
         self._failure=None
         self.opener=build_opener(ProxyHandler({}),NoRedirect())
@@ -80,9 +82,10 @@ class OllamaHandwritingRecognizer:
             # Only exact empty white images bypass inference here; M5 owns blank detection.
             if np.all(image==255):
                 return Transcription(None,ReadStatus.BLANK,(),'blank-image',time.perf_counter()-start,None)
-            if self._failure:
-                raise RecognitionFailure(self._failure)
-            if not self._verified:self.verify()
+            with self._verification_lock:
+                if self._failure:
+                    raise RecognitionFailure(self._failure)
+                if not self._verified:self.verify()
             response=self._request('/api/chat',{
                 'model':self.model,'stream':False,'keep_alive':'5m',
                 'options':{'temperature':0,'seed':0,'num_predict':512},

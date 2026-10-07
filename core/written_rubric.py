@@ -32,7 +32,8 @@ def requested_count(question):
     numbers=dict(one=1,two=2,three=3,four=4,five=5,six=6,seven=7,eight=8,nine=9,ten=10,
                  moja=1,mbili=2,mitatu=3,minne=4,mitano=5,miwili=2,mmoja=1)
     number=r'(?:10|[1-9]|'+'|'.join(numbers)+')'
-    matches=list(re.finditer(r'\b(?:state|list|name|mention|give|identify|outline|describe|explain)\s+(?:any\s+)?('+number+r')\b',text,re.I))
+    matches=list(re.finditer(r'\b(?:state|list|name|mention|give|identify|outline|describe|explain)\s+(?:(?:any|the)\s+)?('+number+r')\b',text,re.I))
+    matches+=list(re.finditer(r'\b(?:what|which)\s+are\s+(?:the\s+)?('+number+r')\b',text,re.I))
     matches+=list(re.finditer(r'\b(?:taja|orodhesha|eleza)\s+\w+\s+('+number+r')\b',text,re.I))
     if len(matches)!=1 or re.search(r'\b(?:each|respectively|at least|at most)\b',text,re.I):return None
     n=matches[0][1].lower()
@@ -56,6 +57,21 @@ def _concepts(items):
     return result
 
 
+def _reference_parts(text):
+    # Only split outside balanced parentheses: "(elect or vote)" is one gloss.
+    depth=0;start=0;parts=[]
+    for match in re.finditer(r'[()]|;|,\s*(?:and\s+)?|\s+and\s+|\n',text):
+        token=match.group()
+        if token=='(':depth+=1
+        elif token==')':
+            depth-=1
+            if depth<0:return [text]
+        elif depth==0:
+            parts.append(text[start:match.start()]);start=match.end()
+    if depth:return [text]
+    return parts+[text[start:]]
+
+
 def prepare_rubric(question):
     """Explicit teacher rubrics win. Legacy lists are split without inventing ideas."""
     criteria=validate_criteria(question)
@@ -71,10 +87,10 @@ def prepare_rubric(question):
         refs=question.get('referenceAnswers',[])
         # Multiple reference strings can mean alternative complete answers, not a pool.
         if len(refs)==1 and isinstance(refs[0],str):
-            parts=[p.strip(' .\n\t') for p in re.split(r';|,\s*(?:and\s+)?|\s+and\s+|\n',refs[0]) if p.strip(' .\n\t')]
+            parts=[p.strip(' .\n\t') for p in _reference_parts(refs[0]) if p.strip(' .\n\t')]
             parts=list(dict.fromkeys(parts))
-            # No split within examples, parentheticals or decimal values.
-            ambiguous=re.search(r'\b(?:such as|for example|including|e\.g\.)\b|[()]|\d,\d',refs[0],re.I)
+            # No split within examples or decimal values; parenthetical synonyms stay attached.
+            ambiguous=re.search(r'\b(?:such as|for example|including|e\.g\.)\b|\d,\d',refs[0],re.I)
             if not ambiguous and count<=len(parts)<=20:
                 concepts=_concepts([dict(id='ref-'+hashlib.sha256(p.encode()).hexdigest()[:12],description=p) for p in parts])
                 return dict(mode='any-n',source='reference-list',requiredCount=count,concepts=concepts)
@@ -84,6 +100,9 @@ def prepare_rubric(question):
 
 def answer_segments(text, rubric=None):
     # Candidate items remain evidence, not automatically distinct credited concepts.
+    # Reflow single wrapped lines; explicit list markers still delimit candidates.
+    # Preserve paragraph boundaries, spelling and the original studentAnswer audit.
+    text = re.sub(r'(?<!\n)\n(?!\n)', ' ', text)
     listing = bool(rubric and rubric.get('mode')=='any-n')
     if not listing:
         parts=[p.strip() for p in re.split(r'\n+|(?<=[.!?;])\s+',text) if p.strip()]

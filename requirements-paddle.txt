@@ -1,0 +1,4 @@
+# Optional corroboration before Gemma; prepare weights with tools.prepare_paddle.
+# Separate dependency set so unsupported platforms can keep TrOCR -> Gemma.
+paddlepaddle==3.3.1
+paddleocr==3.7.0

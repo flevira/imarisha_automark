@@ -6,3 +6,7 @@ pandas
 pytesseract
 easyocr
 pillow
+# Offline written-answer recognition (download weights with python -m tools.prepare_trocr)
+torch>=2.6
+transformers>=4.46,<5
+safetensors

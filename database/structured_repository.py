@@ -28,6 +28,9 @@ class JobRepository:
             CREATE TABLE IF NOT EXISTS structured_transcriptions(
               sequence INTEGER PRIMARY KEY AUTOINCREMENT, job TEXT NOT NULL, response TEXT NOT NULL,
               result TEXT NOT NULL, language TEXT NOT NULL, created TEXT DEFAULT CURRENT_TIMESTAMP);
+            CREATE TABLE IF NOT EXISTS marking_checkpoints(
+              job TEXT NOT NULL, identity TEXT NOT NULL, result TEXT NOT NULL,
+              PRIMARY KEY(job,identity));
             CREATE TABLE IF NOT EXISTS structured_sources(digest TEXT PRIMARY KEY, data BLOB NOT NULL);
             CREATE TABLE IF NOT EXISTS structured_jobs(
               id TEXT PRIMARY KEY, digest TEXT NOT NULL, scope TEXT NOT NULL, name TEXT NOT NULL,
@@ -106,8 +109,10 @@ class JobRepository:
         from core.source_document import open_source
         with open_source(data) as doc:
             total = len(doc)
-            if doc.needs_pass or not 1 <= total <= 200:
-                raise ValueError('Use an unlocked PDF or supported image containing 1–200 pages')
+            if doc.needs_pass:
+                raise ValueError('Unlock the PDF before importing it')
+            if not 1 <= total <= 1000:
+                raise ValueError(f'This document has {total} pages; the supported range is 1–1000 pages per job')
         digest = hashlib.sha256(data).hexdigest()
         with self.connect() as db:
             db.execute('INSERT OR IGNORE INTO structured_sources VALUES (?,?)', (digest,data))
@@ -196,11 +201,22 @@ class JobRepository:
         for row in rows:latest.setdefault(normalize(row['text']),row)
         return list(latest.values())
 
+    def marking_checkpoint(self, job, identity):
+        with self.connect() as db:
+            row=db.execute('SELECT result FROM marking_checkpoints WHERE job=? AND identity=?',(job,identity)).fetchone()
+            return json.loads(row['result']) if row else None
+
+    def save_marking_checkpoint(self, job, identity, result):
+        with self.connect() as db:
+            db.execute('INSERT OR REPLACE INTO marking_checkpoints VALUES(?,?,?)',
+                       (job,identity,json.dumps(result,allow_nan=False)))
+
     def save_marking_run(self, job, result, example=None):
         """Caller holds the job lock; runs are append-only and never extraction data."""
         with self.connect() as db:
             sequence=db.execute('INSERT INTO structured_marking_runs(job,result) VALUES (?,?)',
                               (job,json.dumps(result,allow_nan=False))).lastrowid
+            db.execute('DELETE FROM marking_checkpoints WHERE job=?',(job,))
             if example:
                 db.execute('INSERT INTO teacher_examples(scope,text,score,reviewer,provenance,source_job) VALUES(?,?,?,?,?,?)',
                     (example['scope'],example['text'],example['score'],example['reviewer'],'teacher-score',job))
@@ -376,14 +392,14 @@ class JobRepository:
                 if job is None and current!=set(targets):
                     raise ValueError('Saved jobs changed; refresh and try again')
                 for target in targets:
-                    for table in ('structured_marking_runs','structured_transcriptions',
+                    for table in ('marking_checkpoints','structured_marking_runs','structured_transcriptions',
                                   'structured_pages','structured_responses','structured_crops',
                                   'structured_reviews','structured_issues','structured_issue_reviews'):
                         db.execute(f'DELETE FROM {table} WHERE job=?',(target,))
                     db.execute('DELETE FROM structured_jobs WHERE id=?',(target,))
                 if job is None:
                     # Include any orphaned historical records as part of a full reset.
-                    for table in ('structured_marking_runs','structured_transcriptions','structured_pages',
+                    for table in ('marking_checkpoints','structured_marking_runs','structured_transcriptions','structured_pages',
                                   'structured_responses','structured_crops','structured_reviews',
                                   'structured_issues','structured_issue_reviews','structured_sources','teacher_examples'):
                         db.execute(f'DELETE FROM {table}')

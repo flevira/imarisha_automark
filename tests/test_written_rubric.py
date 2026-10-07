@@ -73,3 +73,31 @@ def test_list_numbers_negation_and_holistic_prose_preserved():
     assert [s['text'] for s in answer_segments('1.5 litres, 1,000 litres',rubric)]==['1.5 litres','1,000 litres']
     assert len(answer_segments('Not theft, hatred or irresponsibility',rubric))==1
     assert len(answer_segments('A concise definition, with context.'))==1
+
+def test_school_election_interrogative_count_and_parenthetical_glosses():
+    q=dict(questionText='What are the two primary rights exercised by pupils during a standard school election?',
+           referenceAnswers=['The right to elect (vote) and the right to be elected (contest for a leadership position).'],maxMarks=9)
+    rubric=prepare_rubric(q)
+    assert rubric['requiredCount']==2
+    assert len(rubric['concepts'])==2
+    judgments=[dict(conceptId=c['id'],status='matched' if i==0 else 'not-demonstrated',
+                    segmentIds=['s1'] if i==0 else []) for i,c in enumerate(rubric['concepts'])]
+    result=grade_judgments(rubric,judgments,[dict(id='s1',text='The right to vote')],9)
+    assert result['score']=='4.50'
+
+
+def test_wrapped_prose_keeps_action_and_object_together():
+    rubric=dict(mode='any-n',concepts=[])
+    assert answer_segments('Ask the prefect to tell the school\nleaders.',rubric)==[
+        dict(id='s1',text='Ask the prefect to tell the school leaders.')]
+    assert [s['text'] for s in answer_segments('The right to vote and\nremove other candidates.',rubric)]==[
+        'The right to vote','remove other candidates.']
+    assert answer_segments('I do not give up.\nI stay calm.')[1]['text']=='I stay calm.'
+
+
+def test_wrapped_negation_is_not_detached_from_candidate():
+    rubric=dict(mode='any-n',concepts=[])
+    segments=answer_segments('Not\nstealing and helping old people.',rubric)
+    assert [s['text'] for s in segments]==['Not stealing and helping old people.']
+    # Explicit numbered items still separate after reflow.
+    assert [s['text'] for s in answer_segments('i) Stealing\nii) hatred',rubric)]==['Stealing','hatred']

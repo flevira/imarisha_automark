@@ -40,7 +40,7 @@ def audit_job(repository, job):
     repository.set_issues(job,issues)
 
 
-def run_job(repository, job, resolver, cancel=None, progress=None, retry_failed=False, recognizer=None, language="en"):
+def run_job(repository, job, resolver, cancel=None, progress=None, retry_failed=False, recognizer=None, language="en", recognition_workers=1, recognition_progress=None):
     cancel = cancel or threading.Event()
     with repository.lock(job):
         info = repository.job(job)
@@ -97,4 +97,4 @@ def run_job(repository, job, resolver, cancel=None, progress=None, retry_failed=
     if not cancel.is_set():
         ocr_job(repository,job,language,cancel)
     if recognizer is not None and not cancel.is_set():
-        recognize_job(repository,job,recognizer,language,cancel)
+        return recognize_job(repository,job,recognizer,language,cancel,recognition_workers,recognition_progress)

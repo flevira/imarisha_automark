@@ -691,3 +691,313 @@ Follow-up validation (2026-10-04): the user authorised the previously declined l
 ### Matching letter pairs in generated papers and reports (2026-10-04)
 
 The web frontend now labels matching left-hand items A–D on question papers and answer sheets, consistent with existing letter-based answer keys. Numeric manifest item positions and bubble geometry remain unchanged. AutoMark extraction and marking HTML comparisons format matching pairs as A=B, C=D, retaining original positions when placeholders are omitted. Older manifests remain readable; existing exported HTML must be exported again to show the new comparison format. No backend migration, restart or remote push is included.
+
+### Phrase recognition, selective OCR fallback and marking recovery (2026-10-05)
+
+Implemented locally:
+
+- Semantic marking v15 compares complete action phrases, their objects and polarity. “Looking after school equipment” can demonstrate “taking care of school property”; destroying it cannot. Concise valid concepts retain independent credit. Readable unrelated terms receive zero rather than semantic uncertainty. Application code still calculates credit, caps scores and preserves genuine uncertainty for teacher review. There is no second AI verification pass.
+- Count recognition now covers “What/which are the two…” and “Identify the two…”. Reference-list splitting keeps balanced parenthetical glosses attached to their concept. The election-rights example has two concepts worth 4.5 each out of nine. Ambiguous counts/reference lists still require a rubric.
+- A missing secondary OCR language pack remains a visible configuration warning but no longer makes confident OCR uncertain by itself. Missing the explicitly selected language, low confidence and empty text remain reading problems. Historical warning-only OCR results with sufficient recorded confidence also avoid unnecessary AI fallback. This does not establish that OCR confidence is calibrated handwriting accuracy.
+- Each completed question is saved in a local marking checkpoint. An interrupted run resumes unchanged results, keyed by reviewed responses, manifest, policy, teacher examples/overrides and installed model digest/prompt version. Successful completion atomically saves the final run and clears its checkpoints; deletion includes checkpoints. Single-job and batch interfaces display question counts, student/question identity and restored progress. Saved historical marking runs remain unchanged until re-marked.
+
+Validation: 11 live local Qwen v15 regression cases passed (57.92 seconds including setup), covering unrelated answers, independent theft credit, negation, repetition, school-property phrase equivalence and unrelated terminology with different capitalization. These prompt-development cases are not held-out evaluation or a general accuracy benchmark. Automated tests also cover 4.5/9 partial credit, language warning versus reading uncertainty, interrupted-run recovery and changed-policy invalidation. No production results were rewritten, services restarted or changes pushed.
+
+### Ordinary OCR improvements, priority 2 (2026-10-06; subsequently reverted)
+
+Implemented locally as `tesseract-written-v2`:
+
+- Conservative ink-band detection chooses single-line PSM 7 or block PSM 6. Source pixels remain intact. NFC Unicode and whitespace cleanup never changes spelling, negations, numbers or answer meaning.
+- Uncertain first readings receive at most one alternate pass: PSM 13 for a single line, or PSM 11 with contrast normalization for a block. Both passes share a 20-second OCR budget. Confident first readings skip retries. Missing secondary language packs alone do not trigger retries.
+- Matching normalized readings may use the higher-confidence attempt. Differing nonempty readings retain the first text and flag disagreement; confidence alone cannot replace words. Retry failure retains the first reading. Original text, both attempts, modes and confidence are saved in optional transcription JSON details without a database migration.
+- Confident v1 and v2 OCR bypass optional Gemma transcription. Uncertain results can still use Gemma only when handwriting assistance is enabled. Approved responses and existing successful saved transcriptions are preserved; this change does not automatically reprocess existing jobs.
+- The handwriting benchmark accepts `tesseract`, `tesseract-single` (v2 without retry), and `paddleocr`, alongside the existing engines. PaddleOCR requires explicit local PP-OCRv5 English recognition weights and separately installed dependencies. It uses line crops and remains benchmark-only/unqualified; it is not active in extraction and Kiswahili is not qualified. The current environment lacks PaddleOCR, so no specialist accuracy or throughput claim is made.
+
+Validation covers cleanup, single-line mode, bounded retries, disagreement, failure recovery, persistence, AI gating and optional specialist boundaries. Evaluate CER/WER, exact transcriptions, scoring-impact errors, fallback rate and timing against independent transcription labels before claiming improved handwriting accuracy. The existing benchmark reports per-language counts/errors; the new single-pass option is not the historical v1 baseline. Scan resolution changes (priority 1), service restarts and production-result changes are outside this update.
+
+PaddleOCR API reference: [Text recognition module](https://www.paddleocr.ai/main/en/version3.x/module_usage/text_recognition.html). OCR preprocessing reference: [Tesseract quality guidance](https://tesseract-ocr.github.io/tessdoc/ImproveQuality.html).
+
+Local validation: OCR/handwriting/written-extraction suite passed 52 tests; specialist-adapter/report suite passed 4; final OCR/manifest-contract suite passed 38 (overlapping OCR tests). A four-crop saved-handwriting smoke comparison found no selected-text improvement: two confident readings remained unchanged and two uncertain alternate readings disagreed, correctly retaining review. This is not evidence of reduced AI usage. The PaddleOCR adapter was tested with a fake local predictor, not an installed model. No services were restarted and no commits or pushes were made.
+
+### Preserve 300-DPI written-answer detail (2026-10-06)
+
+Written regions now render directly from bounded clips of the original PDF at 300 DPI, then map through the existing page homography. Image uploads retain their original embedded raster through the same path. Page identification, QR decoding and bubble extraction continue to use 150-DPI previews; a full 300-DPI page is not allocated. Crop dimensions and clipped source renders are bounded to 20 million pixels each. Pixel-center mapping preserves crop alignment on rotated pages. Visible PDF text and residual-ink checks use the same new crop scale. Captured image/blank responses identify `written-region-capture-v2`; page metadata records `written_crop_dpi`.
+
+This preserves detail present in a 300-DPI source; it cannot restore missing detail in a low-resolution or blurred original. New extractions use the change. Resume does not replace already saved crops or approved responses; testing needs a fresh extraction job. No running application was restarted or production results rewritten.
+
+Validation includes native fine-detail image content versus the previous low-resolution enlargement, all four PDF rotations, original-resolution PNG uploads, oversized crop rejection, persisted 300-DPI crop dimensions and metadata, visible/hidden PDF text, blank regions and existing structured extraction behavior.
+
+### Simplify OCR after the 300-DPI trial (2026-10-06)
+
+At the user's request, retain only the three extraction improvements: 300-DPI source crops, single-line/block mode selection (PSM 7/6), and NFC/whitespace cleanup. `tesseract-written-v3` now performs exactly one OCR call per answer. Removed the alternate PSM 13/11 retry, retry contrast normalization and disagreement selection logic. Removed the inactive PaddleOCR candidate and its benchmark CLI option. The benchmark's `tesseract` option measures the current single-pass recognizer.
+
+The existing 20-second Tesseract timeout, uncertainty thresholds, optional AI fallback, audit metadata and saved-history compatibility remain. Original text and selected mode are still recorded; no second attempt is generated. AI gating understands v1, v2 and v3 results: confident readings skip AI and uncertain readings reach it only when enabled. No existing job, transcription, crop or score is rewritten; previously saved v2 retry history remains historical evidence. No restart or push is included.
+
+Regression coverage checks one call for low-confidence and empty readings, both selected modes, unchanged cleanup, 300-DPI preservation, confident-result AI bypass and uncertain-result AI fallback.
+
+### Restore block-only written OCR (2026-10-06)
+
+At the user's request, `tesseract-written-v4` removes automatic line-band detection and PSM 7/6 selection. Every written answer now receives exactly one Tesseract PSM 6 call, including single-line answers. Retain 300-DPI source crops and NFC/whitespace cleanup. Confidence thresholds, timeout, optional AI fallback and historical saved results are unchanged. AI gating recognises v4 alongside older versions. This does not establish that fallback will return to 50%; comparisons must use the same handwriting set. New extraction after reopening the app is needed; saved successful OCR is not silently replaced.
+
+Validation covers PSM 6 for single/multiple lines, no retries for uncertain or empty readings, cleanup, 300-DPI crop preservation and confident/uncertain AI gating. No service restart, production-data rewrite, commit or push is included.
+
+
+### Revert both morning extraction priorities (2026-10-06)
+
+At the user's request, all application changes from the Priority 1/2 experiment are reverted. Restore 150-DPI page preparation and approximately 144-DPI normalized written crops; restore the original `tesseract-written-v1` one-pass PSM 6 recognizer. Remove the added Unicode/whitespace cleanup, line detection, alternate retries, contrast adjustment, transcription details field, crop-DPI metadata and new benchmark options. Specialist benchmark files were already removed. The preceding experiment entries are retained as history, not active behavior.
+
+Preserve the pre-experiment language-configuration warning fix, semantic marking v15, marking checkpoints and unrelated UI/review work. Saved jobs, experimental transcriptions/crops, reports and source PDFs are not rewritten or deleted. Reopening the app and using a fresh extraction is required to test restored behavior; no automatic restart or remote action is performed. A rollback does not guarantee the earlier 50% fallback rate on different handwriting.
+
+### Bounded parallel AI handwriting trial (2026-10-06)
+
+Implemented an optional **AI transcription pages at once** selector: one (default, sequential) or two (parallel trial). This changes only optional AI handwriting fallback after ordinary OCR. Within each student/layout group, submit at most one answer crop from each of two source pages; finish that group before starting the next student. Files remain sequential. This is concurrent independent crop transcription, not a multi-image prompt or full-page transcription. A student with uncertain answers on only one page remains sequential. No question, reference answer or marking context enters transcription requests.
+
+The coordinator alone reads crops and writes results, preserving response IDs even when requests finish out of order. Each finished draft is saved immediately. Cancellation stops new submissions and waits for bounded in-flight requests to finish and save; resume skips successful saved drafts and reviewed responses. Failed AI calls retain any OCR text, remain retryable and reduce subsequent concurrency to one for the rest of that job. Shared model verification is protected against duplicate concurrent initialization. Existing timeouts and crop limits remain in force.
+
+Progress reports completed AI answers, active pages and elapsed wall time. The completion message retains the total AI wall time across sequential files for comparison. Individual transcription durations may overlap and must not be summed as elapsed time in parallel mode; the returned scheduler summary separates wall time from summed request time. This update does not add persistent run-level timing storage, so record the completion message during trials.
+
+The two-page limit is a conservative trial for the previously identified 16-GB Mac, not a measured capacity or speed guarantee. Ollama may serialize requests: its documented default `OLLAMA_NUM_PARALLEL` is one, and parallel context memory grows with concurrency. No Ollama configuration, service restart, model installation or production-result rewrite is included. Reference: [Ollama concurrency and memory guidance](https://docs.ollama.com/faq).
+
+Validation: controlled fake inference verifies overlap on separate pages, student isolation, a two-request bound, correct response mapping, cancellation draining/resume, OCR retention on failure, serial fallback, confidence/approval skipping and one-time model verification. Existing extraction/OCR/handwriting/UI regressions passed (72 tests); the final UI test also checks explicit default/selection forwarding and retained elapsed-time feedback. These tests establish scheduling behavior, not real-model speed or transcription accuracy. Before adopting two-page mode as the default, compare identical unreviewed crops using one versus two pages, record elapsed time, failures, memory pressure and transcription differences, and retain sequential mode if throughput does not improve. Marking and the reverted OCR configuration are unchanged.
+
+### Semantic marking v16: equivalent wording and clear decisions (2026-10-06)
+
+Target the latest run's rejected reporting alternatives, pending concise definitions/equal-vote descriptions, unrelated terms and contradictory voting claims. Reflow single wrapped lines in evidence segmentation so an action and its object stay together; explicit list markers, negation and paragraph boundaries remain meaningful. The original student answer and extraction records remain unchanged. No spelling replacement or reference-guided transcription is introduced.
+
+Simplify the marking prompt and explain concrete actions that instantiate a general reference, either branch of an OR alternative, concise equivalent definitions, and the distinction between absent evidence and genuinely ambiguous meaning. Retain modifiers and contradictions instead of salvaging isolated matching words. Ask for a bounded semantic comparison before the categorical judgment in the same model request; save that comparison in the audit. Application code still calculates marks and validates concept/evidence IDs. Ambiguous meanings, missing rubrics and invalid output remain reviewable. No additional verification call is introduced; the extra comparison can increase output time per request.
+
+Use `written-marking-v16` in audit/checkpoint identity so v15 semantic checkpoints cannot silently supply a new v16 marking run. Existing approved responses, historical scores and exported reports are not rewritten. Re-marking after reopening the updated application is required to obtain new results. No restart, commit, push or deployment is part of this change.
+
+The selected problem cases are development cases from this run, not held-out evidence. Their simulation scores are provisional benchmark labels, not newly teacher-approved examples. A shorter prompt alone regressed previously correct zero scores to pending and was not retained; the comparison-before-decision format is being validated with both failures and previously correct controls.
+
+Final validation: 75 regression tests passed; 11 opt-in live tests were skipped by the normal suite. A separate real local Qwen3 4B run evaluated 20 selected saved answers without writing to production records: all 12 previously correct controls retained their expected marks, and seven of eight selected failure/pending cases now matched the simulation labels (19/20 total). This resolved the selected equal-vote and patience paraphrases, two unrelated-term cases, the prefect-reporting answer, and both repeated-voting/removing-candidates cases. Student 13042 Q15 remains wrongly zero against the simulation label; its damaged transcription includes “Tea her polit ely,” so robustness to that input remains unresolved. This is targeted development validation, not a new whole-batch accuracy estimate or independent teacher validation. The added semantic comparison costs generation time; measure full-run marking time before accepting the speed trade-off.
+
+### V17 ablation: remove generated semantic comparison (2026-10-06)
+
+At the user's request, remove the generated comparison field and its instruction from marking output. Retain V16's other semantic guidance, wrapped-line evidence handling, OR-alternative handling, partial-credit calculations, validation and genuine-ambiguity review. This is a comparison-removal experiment, not a return to V15. Application-generated score explanations and existing V16 historical comparisons remain available; no saved record is rewritten.
+
+New inference/checkpoint identity is `written-marking-v17`, preventing reuse of earlier semantic checkpoints in a new marking run. Reopening the application and re-marking saved reviewed responses is sufficient; extraction does not need to repeat. No service restart or remote operation is included.
+
+Local regression validation: 73 passed, 11 opt-in model tests skipped. Additional paired local-model validation uses the same 20 development answers with V16 and V17, alternating evaluation order and retaining the same model, reviewed text, rubric and generation settings. Outcomes are compared with provisional simulation labels; these selected cases do not establish held-out accuracy. Reports are temporary and production scores remain unchanged.
+
+Paired live result (20 selected development answers, same installed Qwen3 4B): V16 took 102.44 seconds, matched 19 labels and left none pending; V17 took 47.21 seconds, matched 18 labels and left none pending (approximately 54% less request time). All 12 previously correct controls stayed correct. Removing comparison regressed student 13038 Q16 from correct zero to 4.5/9 for “vote many times and remove other candidates.” Student 13042 Q15 remained incorrectly zero under both versions. The first V16 request included possible model warm-up; this small single-pass trial is not a whole-batch speed or accuracy guarantee. V17 remains the requested experimental configuration for the user's full rerun; do not describe it as uniformly better. No saved grades were changed by the test.
+
+### Implemented locally: TrOCR written-answer extraction (2026-10-07)
+
+- Development branch: `automark_TrOCR`. Replaces the ordinary written-answer
+  Tesseract adapter with `microsoft/trocr-base-handwritten`. OpenCV continues to
+  decode and prepare answer crops; PDF rendering, QR/layout identification,
+  bubbles, text-PDF extraction, review and marking retain their existing paths.
+  The separate student-ID routines still use their existing OCR engines.
+- The [TrOCR model card](https://huggingface.co/microsoft/trocr-base-handwritten)
+  specifies single text-line images. OpenCV removes long horizontal rules from
+  the segmentation mask, groups nearby ink bands, and produces padded lines in
+  top-to-bottom order. TrOCR reads each line and newline-joins the output.
+  Tall/ambiguous bands, empty readings and generation truncation remain uncertain.
+- Model runs locally through Transformers/PyTorch, using MPS when available,
+  otherwise CUDA or CPU. Weights are cached across student jobs and model
+  inference is serialized. No teacher answers or marking context enter OCR.
+- Install requirements and run `.venv/bin/python -m tools.prepare_trocr` once
+  to cache the model. Runtime uses `local_files_only=True`; missing dependencies
+  or weights produce `ocr-unavailable` and a setup message, not a silent download.
+  `AUTOMARK_TROCR_MODEL` can point to a pre-provisioned local model directory.
+- Confidence is a provisional token-score heuristic, not calibrated accuracy:
+  geometric mean below 0.90 or any token below 0.50 triggers review/optional AI.
+  These thresholds are distinct from Tesseract's. The IAM English checkpoint
+  has not been validated for Kiswahili: `sw` and `en-sw` are flagged
+  `ocr-language-unvalidated` and remain eligible for optional AI assistance.
+  Consequently the default mixed-language setting may refer every written
+  answer to AI; use English for an English-only comparison.
+- Existing optional Gemma fallback receives uncertain/error crops; confident
+  English TrOCR readings skip it. Approvals and existing AI drafts are preserved.
+  Resuming unreviewed old Tesseract crops reruns ordinary OCR with TrOCR; completed
+  jobs remain unchanged. Fresh jobs are recommended for paired comparisons.
+- Validation covers ordered multiline reading, rules, ambiguous line bands,
+  blank images, missing weights, confidence/truncation, language limitations,
+  AI eligibility and resume/review behavior. Real handwriting accuracy and
+  referral-rate calibration remain benchmark work, not established improvements.
+- Local validation: 76 targeted tests passed across OCR, parallel fallback,
+  written extraction, review UI and marking; `git diff --check` passed.
+  Installed Transformers 4.57.6 and cached model revision
+  `eaacaf452b06415df8f10bb6fad3a4c11e609406` for local testing.
+  Read-only smoke tests on four retained answer crops produced text, including
+  a two-line Q17 answer reconstructed in reading order. Q13's `feeling` reading
+  was flagged low-confidence; Q16/Q20 and multiline Q17 passed provisional
+  checks. This is a functionality check, not a comparative accuracy benchmark.
+  No saved jobs/results were modified and no running app was restarted.
+
+### Offline selective TrOCR retry benchmark (2026-10-07)
+
+- Added `python -m tools.trocr_retry_benchmark --database <saved-jobs.db>
+  --dataset <simulation-directory> --output <separate-report.json>`.
+  It opens SQLite read-only, freezes a read snapshot, checks source PDF hashes,
+  and selects English TrOCR results flagged only `ocr-low-confidence`.
+- Reproduces greedy decoding on unchanged OpenCV line crops and retries only
+  low-confidence, nonempty, complete lines once with three beams. Limits remain
+  128 new tokens and 20 seconds per line. Selected-token probabilities use
+  `compute_transition_scores` with beam ancestry and normalized logits; EOS and
+  padding are excluded. Every line must pass the existing 0.90/0.50 heuristic
+  thresholds before simulating bypass of Gemma.
+- The separate report preserves baseline/retry/Gemma text and per-line timing,
+  model-load time, mean/median/p95 durations, strict and punctuation-insensitive
+  error metrics, corrections/regressions and every accepted transcription that
+  differs from its simulation label. Expected text is loaded only after inference.
+  Estimated net savings subtract all retry time from saved Gemma time avoided.
+- Unit checks cover candidate exclusions, order, retry bounds, incomplete/empty
+  output, failures and selected-beam score calculation. The tool is isolated
+  from live extraction: no activation, application-data writes, marking changes,
+  service restart, commit or push.
+- Initial execution stopped before inference: the production database now holds
+  120xx jobs, replacing the planned 130xx run's 101 candidates. Earlier comparison
+  reports survive but their crop pixels are absent. Dataset choice is pending;
+  no accuracy or speed benefit has yet been established for retries.
+
+#### Retry benchmark result: current 120xx run (2026-10-07)
+
+- User selected the current saved run: 27 English low-confidence-only answers.
+  Saved PDFs matched the original 120xx simulation by SHA-256. All 27 fresh
+  greedy baselines reproduced saved text exactly. The benchmark ran on CPU;
+  timings must not be generalized to MPS or other device configurations.
+- Three-beam retries bypassed **0/27** Gemma calls under unchanged thresholds.
+  No technical failures occurred. Five answers passed the mean-token threshold
+  and eleven passed the minimum-token threshold, but none passed both for every
+  line. Thus there are no newly auto-accepted mismatches to inspect.
+- Ignoring case, punctuation and whitespace differences, exact transcription
+  increased from 16/27 to 18/27 (two corrected, zero exact-match regressions).
+  Character error rate improved 2.02% to 1.35%; word error rate 10.05% to 7.41%.
+  Saved Gemma readings reached 25/27 exact, 0.58% CER and 1.06% WER.
+  Raw punctuation-sensitive metrics are retained in the separate JSON report.
+- Changes inspected: 12040 Q17 corrected `PROFECT` to `prefect`; 12030 Q15
+  corrected `PLAYTES`/`means` to `plates`/`meals`; 12030 Q13 improved
+  `itiscalledaffering` to `itiscalled a feeling`, but spacing remained wrong.
+- Model load: 4.49 s. Fresh greedy: 42.12 s total, 1.56 s mean, 1.65 s median,
+  2.81 s p95 per answer. Retry: 52.68 s total, 1.95 s mean, 2.04 s median,
+  3.56 s p95. Corresponding saved Gemma calls totalled 120.28 s.
+  Estimated net saving is **negative 52.68 s**: retries add time and avoid no
+  fallback calls. Baseline replay and loading are excluded from that incremental
+  estimate. Simulated final results are identical to the existing Gemma results.
+- Decision: **do not activate this retry strategy**. A wider decoding search
+  modestly improves text, but fails the required speed benefit. Confidence
+  calibration can be investigated separately; thresholds were not weakened to
+  force a favorable result. This small development subset is not held-out proof.
+- Separate local report: `/tmp/automark-trocr-retry-12000.json`.
+  Application data and live extraction behavior remain unchanged.
+
+#### Offline PaddleOCR-before-Gemma benchmark (2026-10-07)
+
+- Tested the current 120xx run's 266 English answers with uncertain TrOCR
+  readings and saved Gemma readings, including segmentation warnings. Source
+  PDFs matched the simulation by SHA-256. Read the database in a read-only
+  snapshot and used saved crops; expected transcriptions were loaded only after
+  inference. No live extraction, marking, approval or database changes.
+- Added `tools/paddle_fallback_benchmark.py` and two passing tests for result
+  order, missing/mismatched results and lexical evaluation. Dependencies and
+  models are isolated under `/tmp`, outside the application's environment.
+  PaddleOCR 3.7.0 / PaddlePaddle 3.3.1 used `PP-OCRv5_mobile_det` and
+  `en_PP-OCRv5_mobile_rec`, CPU with four threads, no document unwarping or
+  orientation model, and no recognition-score filtering before evaluation.
+- Reproduction after preparing those local dependencies and weights:
+
+  ```sh
+  PADDLE_PDX_CACHE_HOME=/tmp/automark-paddlex-cache \
+    /tmp/automark-paddle-benchmark-env/bin/python -m tools.paddle_fallback_benchmark \
+    --models /tmp/automark-paddle-models \
+    --database "$HOME/Library/Application Support/Imarisha AutoMark/structured-jobs.db" \
+    --dataset "$HOME/Downloads/Imarisha_Phase2_50_Student_Scripts" \
+    --output /tmp/automark-paddle-fallback-12000.json
+  ```
+
+- Same-subset transcription results (case, punctuation and repeated whitespace
+  ignored; word boundaries, numbers and negation retained):
+
+  | Reading | Exact / 266 | Character error rate | Word error rate |
+  | --- | ---: | ---: | ---: |
+  | Saved TrOCR | 236 | 0.49% | 1.89% |
+  | PaddleOCR | 97 | 35.93% | 48.07% |
+  | Saved Gemma | 244 | 0.45% | 1.35% |
+
+- PaddleOCR inference total: 94.57 s, mean 0.356 s, median 0.325 s,
+  p95 0.826 s per answer, including detection and recognition. Model
+  construction/load took 1.73 s separately (Python imports excluded).
+  No technical exceptions; 21 answers produced no nonempty reading.
+- Exploratory minimum per-detection confidence policies, with remaining answers
+  retaining saved Gemma results:
+
+  | Policy | Gemma calls avoided | Accepted mismatches | Combined exact / 266 | Estimated net saving |
+  | --- | ---: | ---: | ---: | ---: |
+  | Score ≥0.90 | 157 | 63 | 198 | 577.56 s |
+  | Score ≥0.95 | 142 | 57 | 204 | 508.87 s |
+  | Score ≥0.98 | 72 | 24 | 227 | 202.90 s |
+  | Score ≥0.95 and normalized agreement with TrOCR | 78 | 0 | 244 | 239.96 s |
+
+- Inspected all 63 mismatches accepted by the weakest threshold (which includes
+  the higher-threshold subsets). Errors include word joining/splitting, omitted
+  list numbers, spelling mutations and severe text loss. For example, 12008 Q15
+  returned only `F` for a full sentence with score 0.926; Q16 returned only `T`
+  with score 0.942. Confidence measures recognized detections, not whether all
+  handwriting was detected. The tool's `complete` field means nonempty returned
+  detections only, not verified image coverage.
+- The agreement policy accepted 78 answers across 34 students: 66 with
+  segmentation-only warnings, nine low-confidence-only and three with both.
+  Twelve accepted answers contained at most two words; 66 were longer.
+  All 78 matched simulation transcriptions under the stated normalization.
+  The combined CER/WER remained identical to saved Gemma, with 22 mismatches
+  remaining among the 188 answers still sent to Gemma.
+- Estimated savings subtract **all 266 Paddle calls** from corresponding saved
+  Gemma durations avoided: 334.53 − 94.57 = 239.96 s. That is 29.3% fewer
+  Gemma calls and 21.2% less summed fallback processing time relative to
+  1131.04 s of saved Gemma durations. This is not measured end-to-end wall-time
+  improvement: concurrency, model contention and startup can change it.
+- Decision: reject confidence-only substitution. Agreement is promising for a
+  separate unseen-handwriting validation, not activated by this test. Both OCR
+  engines can agree on the same mistake; these development simulation labels
+  are not independent teacher verification. This evaluates these specific
+  mobile models, not every PaddleOCR configuration or handwriting language.
+- Report: `/tmp/automark-paddle-fallback-12000.json`. Official configuration:
+  [PaddleOCR pipeline documentation](https://www.paddleocr.ai/main/en/version3.x/pipeline_usage/OCR.html)
+  and [recognition models](https://www.paddleocr.ai/main/en/version3.x/module_usage/text_recognition.html).
+  Live TrOCR → optional Gemma behavior is unchanged; no restart, commit or push.
+
+#### Implemented: PaddleOCR agreement before optional Gemma (2026-10-07)
+
+- User authorized integrating the tested agreement strategy. New written-answer
+  flow: TrOCR → selective PaddleOCR corroboration → optional Gemma for remaining
+  uncertainty. Bubble extraction and marking are unchanged.
+- Run Paddle only for English, nonempty uncertain TrOCR readings flagged solely
+  for low confidence and/or uncertain line segmentation. Confident readings,
+  blank regions, failures, incomplete decoding and unvalidated languages do not
+  gain automatic acceptance from Paddle. Neither recognizer sees answer keys.
+- Accept only when every returned Paddle detection has finite confidence ≥0.95
+  and the entire normalized reading agrees with TrOCR. Normalize Unicode NFC,
+  case, punctuation and whitespace as in the benchmark; preserve word boundaries,
+  numbers and negation. High confidence without agreement never bypasses Gemma.
+- Preserve the original TrOCR text and transcription history. Store a separate
+  `paddle-trocr-agreement-v1` record with stage duration and minimum detection
+  score. Accepted corroborations are `read`; rejected/failed corroborations keep
+  TrOCR text and remain uncertain. Recognition scores are uncalibrated heuristics.
+  Teacher review remains a separate step; agreement does not approve a response.
+- Missing dependencies/weights and inference failures retain the normal optional
+  Gemma path. Missing setup is reported in review; one unavailable-model load is
+  attempted per job. Resume reuses completed corroboration, retries unavailable
+  or failed corroboration, and can corroborate older unreviewed TrOCR readings
+  without repeating TrOCR. Existing Gemma drafts, approvals and completed jobs
+  are preserved. Cancellation prevents starting the next stage.
+- Setup is explicit: `python -m pip install -r requirements-paddle.txt`, then
+  `python -m tools.prepare_paddle`. Development dependencies and previously
+  downloaded weights were prepared locally. Default weights directory is
+  `~/.cache/imarisha-automark/paddleocr`; override with
+  `AUTOMARK_PADDLE_MODEL_DIR`. Model loading is local-only, lazy and cached;
+  Paddle inference is serialized and uses four CPU threads. No application
+  restart, production-data update, commit or push was performed.
+- Validation covers whole-answer agreement, missing text, confidence boundaries,
+  NaN/malformed output, unsupported languages, truncation exclusion, fallback
+  eligibility, unavailable-model recovery, history retention, resume reuse,
+  cancellation and completed-job protection. Extraction, handwriting and view
+  regression tests passed; `pip check` found no broken dependencies.
+- Limitation: two OCR systems can agree on the same error. The development
+  benchmark supports this gate, but unseen handwriting and Kiswahili still need
+  separate validation. Confidence does not establish image coverage.
+- Replay through the actual installed implementation reproduced **78 accepted,
+  188 uncertain** on all 266 saved crops, with zero normalized mismatches among
+  accepted readings. The production database was opened read-only for this
+  validation; no saved response was replaced.

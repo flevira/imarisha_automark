@@ -253,3 +253,20 @@ def test_same_student_exam_in_separate_jobs_can_both_be_marked(tmp_path,fixture_
     assert a['attempt_id']==first and b['attempt_id']==second
     assert a['totals'][0]['student_id']==b['totals'][0]['student_id']=='00530'
     assert len(repo.marking_runs(first))==len(repo.marking_runs(second))==1
+
+def test_interrupted_marking_restores_only_identical_inputs(tmp_path,fixture_dir,resolver,monkeypatch):
+    repo,job=completed(tmp_path,fixture_dir,resolver)
+    def stop(progress):
+        if progress['completed']==2:raise RuntimeError('simulated interruption')
+    with pytest.raises(RuntimeError,match='simulated interruption'):
+        mark_job(repo,job,resolver,'Teacher',progress=stop)
+    assert not repo.marking_runs(job)
+    reopened=JobRepository(repo.path)
+    result=mark_job(reopened,job,resolver,'Teacher')
+    assert result['resumed_questions']==2 and len(result['results'])==4
+    with reopened.connect() as db:
+        assert db.execute('SELECT COUNT(*) FROM marking_checkpoints').fetchone()[0]==0
+    with pytest.raises(RuntimeError):
+        mark_job(repo,job,resolver,'Teacher',progress=stop)
+    changed=mark_job(repo,job,resolver,'Teacher',policy=dict(version=1,structured='all-or-nothing'))
+    assert changed['resumed_questions']==0

@@ -44,3 +44,21 @@ def test_full_reset_clears_manifest_and_legacy_but_preserves_files(tmp_path,fixt
         with sqlite3.connect(path) as db:assert db.execute(f'SELECT count(*) FROM {table}').fetchone()[0]==0
     assert report.read_text()=='exported report'
     assert (fixture_dir/'shared-tf-text.pdf').exists()
+
+
+@pytest.mark.parametrize('pages,accepted',[(250,True),(1000,True),(1001,False)])
+def test_large_pdf_job_page_limit(tmp_path,pages,accepted):
+    import pymupdf
+    source=tmp_path/'batch.pdf'
+    with pymupdf.open() as doc:
+        for _ in range(pages):doc.new_page(width=72,height=72)
+        doc.save(source)
+    repo=JobRepository(tmp_path/'jobs.db')
+    if accepted:
+        job=repo.create(source,'test-batch')
+        assert repo.job(job)['total']==pages
+        assert len(repo.job(job)['pages'])==pages
+    else:
+        with pytest.raises(ValueError,match='1001 pages'):
+            repo.create(source,'test-batch')
+        assert repo.jobs()==[]

@@ -211,7 +211,7 @@ def test_single_pass_keeps_context_and_alternatives_without_mutating_manifest(mo
     assert r['score']=='2.50' and len(calls)==1 and q==original
     assert r['background_context']==q['answerDetail']
     assert 'answerDetail' not in r['interpretation_context']
-    assert r['prompt_version']=='written-marking-v14'
+    assert r['prompt_version']=='written-marking-v17'
 
 
 def test_detail_does_not_create_requirements_or_bypass_no_ai_rubric_guard(monkeypatch):
@@ -257,3 +257,45 @@ def test_live_teacher_negative_behaviors_partial_credit(text,expected):
     result=LocalMarkingAssistant().assess(q,text)
     assert result['status']=='scored', result
     assert result['score']==expected, result
+
+@pytest.mark.skipif(__import__('os').environ.get('AUTOMARK_LIVE_MODEL_TESTS')!='1',
+                    reason='Opt-in local Ollama semantic regression')
+@pytest.mark.parametrize('text,expected',[
+    ('Being decent and looking after school equipment.','10.00'),
+    ('Looking after school equipment.','5.00'),
+    ('Destroying school equipment and refusing to follow rules.','0.00')])
+def test_live_school_property_phrases(text,expected):
+    q=dict(maxMarks=10,questionText='List two acts that indicate trustworthiness at school.',
+           referenceAnswers=['Abiding by school rules, being decent, taking care of school property, being truthful, working hard, or maintaining good peer relations.'])
+    result=LocalMarkingAssistant().assess(q,text)
+    assert result['status']=='scored',result
+    assert result['score']==expected,result
+
+@pytest.mark.skipif(__import__('os').environ.get('AUTOMARK_LIVE_MODEL_TESTS')!='1',
+                    reason='Opt-in local Ollama semantic regression')
+@pytest.mark.parametrize('text',['Leadership.','LEADERSHIP.','School election.'])
+def test_live_unrelated_readable_term(text):
+    result=LocalMarkingAssistant().assess(dict(maxMarks=2,
+        questionText='What term describes the personal experience of an emotion?',
+        referenceAnswers=['Feeling']),text)
+    assert result['status']=='scored' and result['score']=='0',result
+
+
+@pytest.mark.parametrize('question,text,reply',[
+    (dict(referenceAnswers=['Water'],maxMarks=2), 'maji', dict(relation='equivalent',segmentIds=['s1'])),
+    (dict(questionText='State one action.',referenceAnswers=['Report concerns'],maxMarks=2),
+     'Report concerns', lambda payload:dict(judgments=[dict(conceptId=c['id'],status='matched',segmentIds=['s1']) for c in payload['rubric']['concepts']]))])
+def test_marking_does_not_request_generated_comparison(monkeypatch,question,text,reply):
+    ai=LocalMarkingAssistant();ai.client._verified=True;ai.client.model_digest='a'*64
+    def request(path,payload):
+        assert 'comparison' not in payload['format']['properties']
+        assert 'comparison' not in payload['format']['required']
+        assert 'First write comparison' not in payload['messages'][0]['content']
+        data=json.loads(payload['messages'][1]['content'])
+        value=reply(data) if callable(reply) else reply
+        return dict(done=True,message=dict(content=json.dumps(value)))
+    monkeypatch.setattr(ai.client,'_request',request)
+    result=ai.assess(question,text)
+    assert result['status']=='scored' and float(result['score'])==2
+    assert result['prompt_version']=='written-marking-v17'
+    assert 'semantic_comparison' not in result

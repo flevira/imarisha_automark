@@ -151,12 +151,11 @@ def test_minimal_job_falls_back_for_framing_and_concepts(setup,monkeypatch):
             return dict(status='review',score=None,reason='ai-unresolved',seconds=0)
     run=mark_job(repo,job,res,'Teacher',policy={'version':1,'fuzzyMatching':False},assistant=Assistant())
     results={r['question_id']:r for r in run['results']}
-    assert all(results[k]['score'] is None and results[k].get('ai') for k in ('2','3','4'))
-    assert {q for q,t in calls}=={'2','3','4'}
-    assert results['5']['score']=='5' and results['5']['reason']=='fuzzy-full-answer'
+    assert all(results[k]['score'] is None and results[k].get('ai') for k in ('2','3','4','5'))
+    assert {q for q,t in calls}=={'2','3','4','5'}
     count=len(calls)
     mark_job(repo,job,res,'Teacher',policy={'version':1,'fuzzyMatching':False},assistant=Assistant())
-    assert len(calls)==count+3
+    assert len(calls)==count+4
     m['questions'][1]['acceptedAlternatives']=[next(t for q,t in calls if q=='2')]
     rerun=mark_job(repo,job,res,'Teacher',assistant=Assistant())
     assert next(r for r in rerun['results'] if r['question_id']=='2')['score']=='5'

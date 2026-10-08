@@ -3,8 +3,8 @@ import re
 import unicodedata
 from core.marking import decimal
 
-VERSION='minimal-written-v3'
-THRESHOLD=.80
+VERSION='minimal-written-v4'
+THRESHOLD=.90
 # Known real-word confusion from the evaluation: never auto-correct its meaning.
 UNSAFE_WORD_PAIRS={frozenset(('elected','deleted'))}
 PROTECTED=set('no not never without neither nor except only all any every many more less before after instead must cannot can may should always sometimes'.split())

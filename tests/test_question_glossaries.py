@@ -115,7 +115,7 @@ def test_live_job_ignores_stored_glossary(setup,monkeypatch):
     saved=repo.marking_runs(job)[0]
     assert next(r for r in saved['results'] if r['display_number']>1)['scoring_question']['topic']=='Democracy'
     assert not any(r.get('fuzzy_evidence') for r in written)
-    assert all(r['fuzzy_policy']['threshold']==.80 for r in written)
+    assert all(r['fuzzy_policy']['threshold']==.90 for r in written)
     off=mark_job(repo,job,resolver,'Teacher',{'version':1,'fuzzyMatching':False})
     assert next(r for r in off['results'] if r['question_id']=='3')['score'] is None
     # Delete one job without destroying the shared glossary.

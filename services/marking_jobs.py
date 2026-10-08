@@ -99,7 +99,7 @@ def mark_job(repository, job, resolver, reviewer, policy=None, assistant=None, p
         total_questions=sum(len(manifests[key]['questions']) for key,student in groups)
         resumed_questions=0;checkpoint_seconds=0
         # Exact input identity prevents old marks surviving response/rubric/example changes.
-        run_identity=dict(version='marking-checkpoint-v9-minimal-80',snapshot=digest(snapshot),
+        run_identity=dict(version='marking-checkpoint-v10-minimal-90',snapshot=digest(snapshot),
                           policy=policy,reviewer=reviewer.strip(),engine=ENGINE,
                           assistant=type(assistant).__qualname__ if assistant else None,
                           model=getattr(getattr(assistant,'client',None),'model',None),
@@ -167,9 +167,9 @@ def mark_job(repository, job, resolver, reviewer, policy=None, assistant=None, p
                     from core.minimal_matching import candidate
                     matched=candidate(question,'\n'.join(r['text'] for r in answers),rule)
                     if matched['accepted']:
-                        result.update(matched['result'],engine='minimal-written-v3',matching_evidence=matched)
+                        result.update(matched['result'],engine='minimal-written-v4',matching_evidence=matched)
                         if matched['reason']=='fuzzy-full-answer':result['fuzzy_evidence']=matched
-                result['fuzzy_policy']=dict(enabled=True,threshold=.80,max_edits=None)
+                result['fuzzy_policy']=dict(enabled=True,threshold=.90,max_edits=None)
                 if assistant and result['reason']=='unlisted-wording-needs-review':
                     text='\n'.join(r['text'] for r in answers)
                     if '[illegible]' not in text.lower():

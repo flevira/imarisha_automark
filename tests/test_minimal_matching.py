@@ -13,13 +13,13 @@ def test_cleanup_and_multiple_edits():
     assert r['accepted'] and r['matches'][0]['distance']==2
     assert r['result']['score']=='5'
     assert distance('kitten','sitting')==3
-    assert candidate(q('Emotions'),'Emotioms')['accepted'] is True
+    assert candidate(q('Emotions'),'Emotioms')['accepted'] is False
 
 
 def test_threshold():
-    assert pair('abcdefghij','abcdxyghij')['similarity']==.8
-    assert pair('abcdefghi','abcdxyghi') is None
-    assert candidate(q('feeling'),'feelings')['accepted']
+    assert pair('abcdefghij','abcdxfghij')['similarity']==.9
+    assert pair('abcdefghi','abcdxfghi') is None
+    assert not candidate(q('feeling'),'feelings')['accepted']
     assert not candidate(q('feeling'),'feelings .')['accepted']
 
 

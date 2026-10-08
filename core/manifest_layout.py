@@ -87,6 +87,14 @@ def _validate_manifest(manifest: Any) -> dict:
     for name in ("assessmentId", "assessmentGroupId"):
         require(isinstance(manifest.get(name), str) and re.fullmatch(r"[1-9][0-9]*", manifest[name]) is not None, f"Invalid {name}")
     require(manifest.get("unit") == "pt" and manifest.get("coordinateOrigin") == "top-left", "Unsupported coordinates")
+    # Optional question metadata is preserved verbatim; older manifests omit it.
+    if "questions" in manifest:
+        require(isinstance(manifest["questions"], list), "Invalid questions")
+        for question in manifest["questions"]:
+            require(isinstance(question, dict), "Invalid question metadata")
+            for field in ("subject", "topic"):
+                if field in question:
+                    require(isinstance(question[field], str), f"Invalid question {field}: expected a string")
     pages = manifest.get("pages")
     require(isinstance(pages, list) and 1 <= len(pages) <= 200, "Invalid page count")
     row_ids = set()

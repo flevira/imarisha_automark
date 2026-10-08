@@ -43,3 +43,22 @@ def test_imported_manifest_extracts_pdf_without_backend(tmp_path,fixture_dir):
 
 
 from test_page_alignment import fixture_dir
+
+
+def test_subject_topic_survive_import_and_cache(tmp_path,manifest):
+    question=manifest['questions'][0]
+    question.update(subject='Civics',topic='Democracy')
+    path=tmp_path/'metadata.json'
+    path.write_text(json.dumps(dict(format='imarisha-automark-manifest',packageVersion=1,manifest=manifest)))
+    resolver=ImportedManifestResolver(tmp_path/'cache.db')
+    assert resolver.import_file(path)['questions'][0]==question
+    saved=ImportedManifestResolver(tmp_path/'cache.db').resolve(manifest['layoutId'],manifest['assessmentType'],manifest['assessmentId'])
+    assert saved==manifest
+
+
+@pytest.mark.parametrize('field',['subject','topic'])
+@pytest.mark.parametrize('value',[None,42,False,[],{}])
+def test_question_metadata_rejects_non_strings(manifest,field,value):
+    from core.manifest_layout import validate_manifest
+    manifest['questions'][0][field]=value
+    with pytest.raises(PreparationError,match=field):validate_manifest(manifest)

@@ -144,3 +144,21 @@ def test_distorted_marker_geometry_fails_independent_residual(fixture_dir,resolv
     result = prepare_image(image,"synthetic",1,resolver)
     assert result.status == "review"
     assert result.reason in ("markers-unreliable","alignment-unreliable")
+
+
+def test_tight_corner_qr_recovery_preserves_coordinates(monkeypatch):
+    image=np.zeros((1800,1200,3),np.uint8)
+    payload='v=6;type=TEST;assessmentId=2130;testId=2130;layoutId=layout-v6;page=4;studentId=733'
+    local=np.array([[[100,100],[200,100],[200,200],[100,200]]],np.float32)
+    class Detector:
+        calls=0
+        def detectAndDecodeMulti(self,view):return False,(),None,None
+        def detectAndDecode(self,view):
+            if view.shape[:2]==(900,600):
+                Detector.calls+=1
+                if Detector.calls==1:return payload,local,None
+            return '',None,None
+    monkeypatch.setattr(cv2,'QRCodeDetector',Detector)
+    decoded=decode_sheet(image)
+    assert decoded.identity.student_id=='733' and decoded.identity.page_number==4
+    assert np.allclose(decoded.qr_quad,local.reshape(4,2)/1.5+[800,0])

@@ -68,12 +68,16 @@ def export_marking_run(run, directory, *, name='Assessment', outdated=False):
     for result in results:
         responses = extracted_answer(run,result)
         ai = result.get('ai') or {}
-        explanation = ai.get('explanation') or (ai.get('proposal') or {}).get('explanation', '')
+        explanation = result.get('explanation') or ai.get('explanation') or (ai.get('proposal') or {}).get('explanation', '')
         if result.get('teacher_decision'):
             explanation='Teacher: '+result['teacher_decision']['reviewer']+'. '+result['teacher_decision'].get('note','')
         if result.get('similarity_estimate') and result['score'] is None:
             estimate=result['similarity_estimate']
             explanation+=f" Similarity suggestion: {estimate['suggested_score']}/{estimate['max_marks']} (not included in totals; teacher review required)."
+        from core.written_matching import typo_note
+        explanation+=typo_note(result)
+        from core.fuzzy_marking import audit_note
+        explanation+=audit_note(result or {})
         details.append('<tr>'+''.join(f'<td>{esc(v)}</td>' for v in
             [result['student_id'], result['display_number'], correct_answer(run,result), responses,
              result['score'] if result['score'] is not None else 'Pending',

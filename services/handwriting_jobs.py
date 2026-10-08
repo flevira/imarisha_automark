@@ -14,6 +14,7 @@ def _eligible(row, recognizer, language):
     if row['review'] or raw.response_type != ResponseType.WRITTEN or 'handwriting-recognition-pending' not in raw.review_reasons:
         return False
     old = row.get('transcription')
+    if old and old.get('engine')=='image-inspection-repair-v1':return False
     if old and old['engine'] == 'tesseract-written-v1':
         warning_only = (old.get('text') and old.get('language') == language and language != 'sw'
             and set(old.get('review_reasons', [])) == {'ocr-language-pack-missing'}
@@ -138,6 +139,7 @@ def ocr_job(repository,job,language='en',cancel=None):
             for row in repository.responses(job):
                 if cancel.is_set():break
                 raw=row['response'];old=row.get('transcription')
+                if old and old.get('engine')=='image-inspection-repair-v1':continue
                 if row['review'] or raw.response_type!=ResponseType.WRITTEN or raw.raw_text or raw.status==ReadStatus.BLANK:continue
                 reuse = old and old['status'] != 'error' and old['language'] == language
                 if reuse and old['engine'].startswith('ollama:'):continue

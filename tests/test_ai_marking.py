@@ -67,12 +67,18 @@ def test_written_ai_scores_are_separate_audited_and_repeatable(setup):
             assert q['scoringCriteria']==context['scoringCriteria']
             return dict(status='review',score=None,reason='ai-unresolved',seconds=0)
     third=mark_job(repo,job,manifest_resolver,'Teacher',policy=policy,assistant=ContextAI())
-    assert third['policy']==policy
+    assert third['policy']==dict(policy,fuzzyMatching=True)
     pending=next(r for r in third['results'] if r['question_id']=='4')
-    assert pending['score'] is None and pending['similarity_estimate']['requires_teacher_review']
+    assert pending['score'] is None and 'similarity_estimate' not in pending
     bad=dict(version=1,writtenContext={'wrong-layout':{'4':context}})
     with pytest.raises(ValueError,match='Unknown written-context layout'):
         mark_job(repo,job,manifest_resolver,'Teacher',policy=bad)
+
+
+def wire(value):
+    if isinstance(value,dict) and isinstance(value.get('judgments'),list):
+        return dict(value,judgments={j['conceptId']:{k:v for k,v in j.items() if k!='conceptId'} for j in value['judgments']})
+    return value
 
 
 def provider(monkeypatch,reply,check=None):
@@ -84,7 +90,7 @@ def provider(monkeypatch,reply,check=None):
             return dict(done=True,message=dict(content=json.dumps(dict(checks=[dict(conceptId=p['conceptId'],relation='same-meaning') for p in sent['verificationPairs']]))))
         if check:check(sent)
         value=reply(json.loads(payload['messages'][1]['content'])) if callable(reply) else reply
-        return dict(done=True,message=dict(content=json.dumps(value)))
+        return dict(done=True,message=dict(content=json.dumps(wire(value))))
     monkeypatch.setattr(ai.client,'_request',request)
     return ai
 
@@ -96,7 +102,7 @@ def test_holistic_scores_are_application_owned(monkeypatch,relation,score,status
            answerDetail='It damages public trust and slows development.',maxMarks=5)
     def check(payload):
         assert 'answerDetail' not in payload
-        assert payload['gradedExamples'][0]['score']=='5'
+        assert 'gradedExamples' not in payload
         assert payload['rubric']['mode']=='holistic'
         assert payload['rubric']['concepts']==[]
     result=provider(monkeypatch,dict(relation=relation,segmentIds=['s1']),check).assess(q,'Using public power for personal benefit')
@@ -199,19 +205,19 @@ def test_single_pass_keeps_context_and_alternatives_without_mutating_manifest(mo
         data=json.loads(payload['messages'][1]['content']);calls.append(data)
         assert 'verificationPairs' not in data
         assert 'answerDetail' not in data
-        assert data['gradedExamples']
+        assert 'gradedExamples' not in data
         assert data['rubric']['requiredCount']==2
         assert data['rubric']['concepts'][1]['acceptedAlternatives']==['trained educators']
         assert data['studentAnswer']=='Too few people trained to teach the public.'
         value=dict(judgments=[dict(conceptId='funds',status='not-demonstrated',segmentIds=[]),
             dict(conceptId='staff',status='matched',segmentIds=['s1'])])
-        return dict(done=True,message=dict(content=json.dumps(value)))
+        return dict(done=True,message=dict(content=json.dumps(wire(value))))
     monkeypatch.setattr(ai.client,'_request',request)
     r=ai.assess(q,'Too few people trained to teach the public.')
     assert r['score']=='2.50' and len(calls)==1 and q==original
     assert r['background_context']==q['answerDetail']
     assert 'answerDetail' not in r['interpretation_context']
-    assert r['prompt_version']=='written-marking-v17'
+    assert r['prompt_version']=='written-marking-v25'
 
 
 def test_detail_does_not_create_requirements_or_bypass_no_ai_rubric_guard(monkeypatch):
@@ -293,9 +299,114 @@ def test_marking_does_not_request_generated_comparison(monkeypatch,question,text
         assert 'First write comparison' not in payload['messages'][0]['content']
         data=json.loads(payload['messages'][1]['content'])
         value=reply(data) if callable(reply) else reply
-        return dict(done=True,message=dict(content=json.dumps(value)))
+        return dict(done=True,message=dict(content=json.dumps(wire(value))))
     monkeypatch.setattr(ai.client,'_request',request)
     result=ai.assess(question,text)
     assert result['status']=='scored' and float(result['score'])==2
-    assert result['prompt_version']=='written-marking-v17'
+    assert result['prompt_version']=='written-marking-v25'
     assert 'semantic_comparison' not in result
+
+
+def test_minimal_context_and_neutral_prompt(monkeypatch):
+    q=dict(questionText='Name the process.',referenceAnswers=['Process'],maxMarks=2,
+           subject='Science',topic='Changes',approvedExamples=[{'text':'ignored'}])
+    ai=LocalMarkingAssistant();ai.client._verified=True;ai.client.model_digest='a'*64
+    def request(path,payload):
+        system=payload['messages'][0]['content'];data=json.loads(payload['messages'][1]['content'])
+        assert all(x not in system for x in ('school equipment','theft','evaporation','voting repeatedly','village','TIE','glossary'))
+        assert data['educationalContext']==dict(subject='Science',topic='Changes')
+        assert 'gradedExamples' not in data and 'scoringAuthority' not in data
+        return dict(done=True,message=dict(content=json.dumps(dict(relation='equivalent',segmentIds=['s1']))))
+    monkeypatch.setattr(ai.client,'_request',request)
+    assert ai.assess(q,'Process')['score']=='2'
+
+
+def test_missing_subject_topic_not_inferred():
+    from core.marking_context import educational_context
+    context=educational_context({'questionText':'Describe plants.'})
+    assert 'subject' not in context and 'topic' not in context
+
+
+def test_v20_fixed_concept_keys_and_partial_credit(monkeypatch):
+    q=dict(questionText='State two actions.',referenceAnswers=['Action alpha and action beta'],maxMarks=5,
+           requiredConceptCount=2,acceptedConcepts=[dict(id='alpha',description='Action alpha'),dict(id='beta',description='Action beta')])
+    ai=LocalMarkingAssistant();ai.client._verified=True;ai.client.model_digest='a'*64;calls=[]
+    def request(path,payload):
+        calls.append(payload)
+        schema=payload['format']['properties']['judgments']
+        assert schema['type']=='object' and schema['required']==['alpha','beta']
+        assert set(schema['properties'])=={'alpha','beta'} and schema['additionalProperties'] is False
+        system=payload['messages'][0]['content']
+        for rule in ('singular/plural','specific action that fulfils','question supplies the setting',
+                     'Never discard an incorrect qualifier','never supply an action'):
+            assert rule in system
+        assert not any(word in system.lower() for word in ('prefect','voting','emotions','teacher politely','school property'))
+        return dict(done=True,message=dict(content=json.dumps({'judgments':{
+            'beta':{'status':'not-demonstrated','segmentIds':[]},
+            'alpha':{'status':'matched','segmentIds':['s1']}}})))
+    monkeypatch.setattr(ai.client,'_request',request)
+    result=ai.assess(q,'Action alpha')
+    assert result['score']=='2.50' and len(calls)==1
+    assert [j['conceptId'] for j in result['effective_judgments']]==['alpha','beta']
+
+
+@pytest.mark.parametrize('content',[
+    '{"judgments":{"alpha":{"status":"matched","segmentIds":["s1"]},"alpha":{"status":"matched","segmentIds":["s1"]}}}',
+    '{"judgments":{"alpha":{"status":"matched","segmentIds":["s1"]}}}',
+    '{"judgments":{"alpha":{"status":"matched","segmentIds":["s1"]},"beta":{"status":"matched","segmentIds":["unknown"]}}}',
+])
+def test_invalid_keyed_judgments_never_silently_repaired(monkeypatch,content):
+    q=dict(questionText='State two actions.',referenceAnswers=['Alpha and beta'],maxMarks=5,
+           requiredConceptCount=2,acceptedConcepts=[dict(id='alpha',description='Alpha'),dict(id='beta',description='Beta')])
+    ai=LocalMarkingAssistant();ai.client._verified=True;ai.client.model_digest='a'*64;calls=[]
+    def request(*args):
+        calls.append(1);return dict(done=True,message=dict(content=content))
+    monkeypatch.setattr(ai.client,'_request',request)
+    r=ai.assess(q,'Alpha and beta')
+    assert r['status']=='review' and r['score'] is None and len(calls)==2
+    assert r['reason'].startswith('ai-invalid')
+
+
+@pytest.mark.parametrize('counted',[False,True])
+def test_compact_prompt_preserves_key_and_qualifier_checks(monkeypatch,counted):
+    q=dict(questionText='Name the response.',referenceAnswers=['Reference'],maxMarks=5)
+    if counted:
+        q.update(questionText='State two actions.',referenceAnswers=['Action alpha and action beta'],
+                 requiredConceptCount=2,acceptedConcepts=[dict(id='alpha',description='Action alpha'),dict(id='beta',description='Action beta')])
+    ai=LocalMarkingAssistant();ai.client._verified=True;ai.client.model_digest='a'*64;calls=[]
+    def request(path,payload):
+        calls.append(payload)
+        system=payload['messages'][0]['content']
+        assert len(system.split())<=400
+        for phrase in ('do not substitute a different answer','Do not demand a definition',
+                       'negates, misidentifies or contradicts','Never discard an incorrect qualifier',
+                       'action, actor/object, negation, quantity and restrictions'):
+            assert phrase in system
+        assert payload['think'] is False and payload['options']['num_predict']==1600
+        value={'relation':'equivalent','segmentIds':['s1']}
+        if counted:value={'judgments':{k:{'status':'matched','segmentIds':['s1']} for k in ('alpha','beta')}}
+        return dict(done=True,message=dict(content=json.dumps(value)))
+    monkeypatch.setattr(ai.client,'_request',request)
+    result=ai.assess(q,'Reference' if not counted else 'Action alpha and action beta')
+    assert result['status']=='scored' and len(calls)==1
+
+
+@pytest.mark.parametrize('subject',['English','Mathematics','Biology','History','Kiswahili'])
+def test_task_guidance_is_shared_across_subjects(monkeypatch,subject):
+    # Protocol test only: a mocked model cannot establish semantic accuracy.
+    ai=LocalMarkingAssistant();ai.client._verified=True;ai.client.model_digest='a'*64
+    calls=[]
+    def request(path,payload):
+        calls.append(payload)
+        system=payload['messages'][0]['content']
+        assert 'not an exhaustive wording template' not in system
+        assert 'identifiable unmet requirement' not in system
+        assert 'teacher answer and criteria as the scoring key' in system
+        assert 'established regional variants' in system
+        assert subject not in system
+        data=json.loads(payload['messages'][1]['content'])
+        assert data['educationalContext']['subject']==subject
+        return dict(done=True,message=dict(content=json.dumps(dict(relation='equivalent',segmentIds=['s1']))))
+    monkeypatch.setattr(ai.client,'_request',request)
+    result=ai.assess(dict(questionText='Give the requested result.',referenceAnswers=['Reference'],maxMarks=5,subject=subject),'Response')
+    assert len(calls)==1 and result['score']=='5'

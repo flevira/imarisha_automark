@@ -9,6 +9,18 @@ from core.contracts import ExtractedResponse, ReadStatus, ResponseType, SourceRe
 from core.page_alignment import normalized_preview, transform_points
 
 
+def has_local_ink(dark):
+    """Keep small written answers out of the blank fast path, regardless of box size."""
+    count,_,stats,_=cv2.connectedComponentsWithStats(dark.astype(np.uint8),8)
+    height,width=dark.shape
+    for x,y,w,h,area in stats[1:]:
+        # Ignore isolated scan specks and thin region-border remnants.
+        if area<8 or w<2 or h<3:continue
+        if (w>=width*.95 and h<=3) or (h>=height*.95 and w<=3):continue
+        return True
+    return False
+
+
 def capture_written(page, result, pdf_page=None):
     if not page.geometry.get('writtenRegions'):
         return result
@@ -58,7 +70,7 @@ def capture_written(page, result, pdf_page=None):
         raw=None
         if text and not has_image and not partial and not unexplained_ink:
             raw=text;status=ReadStatus.READ;engine='pdf-visible-text-v1'
-        elif ink<=.002 and not text and not partial:
+        elif ink<=.002 and not has_local_ink(dark) and not text and not partial:
             status=ReadStatus.BLANK;engine='written-region-capture-v1'
         else:
             status=ReadStatus.UNCERTAIN;engine='written-region-capture-v1'

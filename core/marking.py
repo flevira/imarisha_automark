@@ -36,6 +36,10 @@ def text_value(value, rule):
             value=re.sub(r'(?im)'+pattern,'__ITEM__',value)
             value=' and '.join(part.strip().rstrip('.') for part in value.split('__ITEM__') if part.strip())
         value=value.strip().rstrip('.')
+    if rule.get('normalizePresentation'):
+        from core.written_matching import presentation
+        value = presentation(value, case_sensitive=rule['caseSensitive'],
+                             collapse_whitespace=rule['collapseWhitespace'])
     if rule['collapseWhitespace']:
         value = ' '.join(value.split())
     return value if rule['caseSensitive'] else value.casefold()
@@ -43,7 +47,14 @@ def text_value(value, rule):
 
 def written_matches(text, answers, rule):
     if rule.get('mode') == 'text-exact':
-        return text_value(text, rule) in [text_value(a, rule) for a in answers]
+        value = text_value(text, rule)
+        keys = [text_value(a, rule) for a in answers]
+        if value in keys:
+            return True
+        if rule.get('allowAnswerFraming'):
+            from core.written_matching import unframe
+            return unframe(value) in keys
+        return False
     if rule.get('mode') != 'numeric':
         raise ValueError('written-scoring-policy-required')
     tolerance = decimal(rule.get('tolerance'))
@@ -96,12 +107,17 @@ def _mark_question(question, expected, responses, rule):
             raise ValueError('scoring-policy-required')
         allowed = {'version','mode'}
         if rule.get('mode') == 'text-exact':
-            allowed |= {'caseSensitive','collapseWhitespace','rejectUnlisted','normalizeListFormatting'}
+            allowed |= {'caseSensitive','collapseWhitespace','rejectUnlisted','normalizeListFormatting',
+                        'normalizePresentation','allowAnswerFraming'}
+            if any(type(rule[k]) is not bool for k in allowed-{'mode','version'} if k in rule):
+                raise ValueError('text-normalization-policy-required')
         elif rule.get('mode') == 'numeric':
             allowed |= {'tolerance','unit'}
         if not set(rule) <= allowed:
             raise ValueError('unsupported-scoring-policy')
         if kind == 'WRITTEN':
+            if rule.get('rejectUnlisted') and (question.get('acceptedConcepts') or question.get('scoringCriteria')):
+                raise ValueError('exhaustive-answer-rule-conflicts-with-partial-rubric')
             if question.get('status') not in ('READY', 'MANUAL_REVIEW'):
                 raise ValueError('answer-key-needs-review')
             answers = question.get('referenceAnswers')

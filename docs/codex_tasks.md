@@ -1001,3 +1001,461 @@ Paired live result (20 selected development answers, same installed Qwen3 4B): V
   188 uncertain** on all 266 saved crops, with zero normalized mismatches among
   accepted readings. The production database was opened read-only for this
   validation; no saved response was replaced.
+
+#### Implemented: five non-AI marking priorities (2026-10-07)
+
+Local development branch: `automark_nonai`, based on `automark_TrOCR` at
+`4c8b9d03`. This strengthens the deterministic gate before existing optional AI
+marking. Extraction, OCR models and AI prompts are unchanged.
+
+1. **Normalized exact answers and approved alternatives.** Default written
+   matching tolerates Unicode presentation, case, whitespace and sentence-final
+   punctuation. Explicit case/whitespace policies remain authoritative. Added a
+   per-question field for teacher-approved full-credit alternatives; the original
+   teacher reference remains intact. Alternatives are saved in the marking
+   policy, without rewriting the imported manifest.
+2. **Complete phrases with limited neutral framing.** Accept anchored introductions
+   such as “The answer is …”, “Answer: …” and “It is …”. The complete remaining
+   answer must match. Unknown additions, negation, contrast and meaningful
+   punctuation are not removed to manufacture a match.
+3. **Explicit concepts and partial credit.** Match whole approved concept phrases
+   and their approved alternatives across commas, semicolons, “and”, line breaks
+   and numbered/lettered lists. Preserve wrapped phrases and prefer a complete
+   compound phrase over splitting it. Deduplicate repeated concepts; ambiguous
+   aliases and unexplained clauses fall through to AI/review. Existing Decimal
+   rubric calculations enforce weights, required counts and caps: one of two
+   equal concepts earns 2.50/5; one of three earns 3.33/10. Inferred reference
+   concepts and AI-generated alternatives are not automatically approved.
+4. **Explicit constrained rules.** Retain numeric tolerance/unit rules. Add a
+   visible opt-in for an exhaustive complete-answer list, where unlisted answers
+   receive zero without AI. This must not be combined with a partial-credit
+   concept rubric. Leave it unchecked for open-ended semantic questions. Invalid
+   rule flags and conflicting policies require review instead of guessing.
+5. **Conservative typo advice.** Show at most three single-word, one-edit spelling
+   candidates in results and exports. Suggestions never rewrite transcriptions,
+   award marks or bypass AI. They are not confidence estimates. No fuzzy,
+   TF-IDF or token-overlap score assignment was introduced.
+
+New result metadata identifies `nonai-written-v1`; recovery checkpoint identity
+was changed to prevent reuse of earlier gate decisions. Approved teacher scores
+and existing audit history remain available. Completed re-marking still runs the
+existing evaluation flow; this is not a new cross-run answer cache.
+
+Validation covers framing, negation/extra claims, explicit case sensitivity,
+concept ordering, duplicate and ambiguous aliases, decimal partial marks,
+weighted criteria, numeric tolerance/units, exhaustive-rule conflicts and typo
+limits. End-to-end tests check the actual marking service and UI policy fields;
+unknown wording still reaches optional AI. Report/export regression tests are
+included. Live model inference is not required for these deterministic checks.
+
+Offline evaluation: `python -m tools.benchmark_nonai_marking cases.json output.json`
+uses question metadata and student answers, calls no AI and writes only its
+separate report. Expected scores are read only for evaluation after matching;
+held-out responses copied into non-reference examples are rejected. Labels must
+still carry provenance and be independently reviewed for accuracy claims.
+
+A replay of 500 saved 130xx written answers with reconstructed **reference-only**
+metadata resolved 5 without AI and deferred 495, taking about 0.031 seconds of
+summed gate time. All five resolved scores matched simulation labels. Report:
+`/tmp/automark-nonai-130xx-review.json`. This is not a full-manifest benchmark or a
+measured end-to-end speed improvement. More coverage requires teacher-approved
+alternatives/concepts or deliberately exhaustive rules; unfamiliar responses
+must not become automatic zeros merely to reduce AI requests. Validate coverage,
+false zeros, excessive credit and elapsed marking time on the next configured
+run and on unseen answers before claiming an improvement.
+
+No production database edits, service restart, commit, push or deployment were
+performed for this implementation.
+
+#### Offline trial: derived reference-list deterministic marking (2026-10-07)
+
+- Implemented `tools/benchmark_reference_concepts.py` on `automark_nonai` only.
+  It reuses the current deterministic benchmark, complete-phrase parser and
+  Decimal rubric calculator. The live `explicit_concept_match` source check is
+  unchanged. No models are called and the application database is opened with
+  SQLite `mode=ro`, `query_only` and a read transaction.
+- Candidate matching runs only after the baseline returns unlisted wording.
+  It requires a derived reference list and a clear required count. All text must
+  match literal reference concepts; unknown clauses and contradictory additions
+  defer. Repetition adds no credit and the required count caps marks. No inferred
+  synonyms, fuzzy matching or automatic zero scores were added.
+- This initial trial conservatively rejects all parenthetical structures (even
+  balanced glosses), standalone OR, examples and mixed comma/semicolon/newline
+  plus AND lists. The mixed-list restriction protects compound items such as
+  “bread and butter, milk”; it also rejects some valid lists. These are deliberate
+  coverage limits, not claims that every rejected reference is ambiguous.
+- Read the latest saved run for each of the 50 current jobs: 500 written answers
+  with their saved question metadata, rules, text and AI durations. Simulation
+  marks were used only for evaluation. Expected transcriptions were not read or
+  supplied to the matcher. Duplicate student/question attempts are rejected.
+- Result: baseline 5 deterministic answers; candidate 5; **zero newly resolved,
+  zero AI requests avoided**. Of 495 deferred answers, 245 use holistic reference
+  answers, 150 references contain OR/examples, 50 have parentheses and 50 have
+  mixed list structure. No answers reached literal candidate matching in this
+  dataset, so it does not validate candidate accuracy on real responses.
+- Saved and simulated full workflows both agree with 497/500 simulation marks,
+  with one false zero and one over-credit; the third error is partial under-credit.
+  The five baseline deterministic scores all agree. Added gate processing was
+  about 0.009 seconds total; avoided saved AI time was zero. This is summed local
+  processing and estimated request savings, not measured application wall time.
+  There are no newly accepted answers to inspect. **Do not adopt this gate live
+  on the basis of this trial:** it demonstrated no request reduction.
+- Final per-answer JSON and escaped HTML reports are in
+  `artifacts/reference-concept-benchmark-20261007-final/results.json` and
+  `artifacts/reference-concept-benchmark-20261007-final/results.html` (local,
+  ignored artifacts). They include question/reference/student text, decisions,
+  matched concepts and calculations when applicable. Reproduce with:
+  `python -m tools.benchmark_reference_concepts --database PATH --labels GROUND_TRUTH_JSON --output NEW_DIRECTORY`.
+- Validation: 69 targeted tests passed, then 22 benchmark tests passed after
+  adding read-only/latest-run validation (70 unique tests across these runs).
+  Coverage includes 2.50/5, 3.33/10 and 6.67/10, repeated concepts, extra reference
+  choices and caps, list markers, compound/parenthetical rejection, negation,
+  unknown additions, case policy, invalid counts, unchanged live fallback,
+  evaluation-label isolation and HTML escaping.
+- No live marking changes, saved-data edits, model calls, service restarts,
+  commits or pushes were performed. Next investigation should evaluate safe
+  parsing of existing parenthetical glosses and OR alternatives separately,
+  rather than silently relaxing these benchmark safeguards.
+
+#### Offline edit-distance / fuzzy matching experiment (2026-10-07)
+
+- Implemented benchmark-only `tools/fuzzy_marking_trial.py` and
+  `tools/benchmark_fuzzy_marking.py`. No live application module imports them.
+  The reference benchmark now accepts a candidate function, retaining its
+  existing default. Application scores and transcriptions are unchanged.
+- Compare spacing-only matches and cumulative one-character Levenshtein trials
+  at normalized similarity thresholds 95%, 97% and 99%. Require complete-answer
+  or explicit approved-concept coverage. Cap edit calculation at two; permit
+  at most one edit, in one alphabetic word of at least four characters. Reject
+  numeric spelling edits, changed punctuation, protected negation/qualifiers,
+  ambiguous candidate ownership and unexplained clauses. These guards do not
+  establish semantic equivalence; similar real words can still differ in meaning.
+- Similarity does not determine marks. Full reference matches receive maximum
+  marks; explicit concept matches use the existing rubric calculator. Candidate
+  aliases are temporary copies only; they are never added to a saved rubric.
+- Tested on the same 500 saved written responses, using a read-only connection
+  and expected marks only after matching. All four variants resolved **zero
+  additional answers**, avoided **zero AI calls**, and retained 5 deterministic
+  answers plus 495 AI fallbacks. Simulated complete-workflow agreement remains
+  497/500; one false zero, one over-credit and one partial under-credit remain.
+  Each sweep added approximately 0.015–0.016 seconds, with no saved AI time.
+- There were no newly accepted real responses to inspect. Most student answers
+  are paraphrases rather than nearly identical reference strings, and this exam
+  has no explicit approved concept alternatives. This result does not validate
+  fuzzy scoring accuracy or justify lowering thresholds to force coverage.
+- Local JSON and HTML comparisons are in `artifacts/fuzzy-marking-20261007/`;
+  `index.html` links the four variants. Regenerate with
+  `python -m tools.benchmark_fuzzy_marking --database PATH --labels JSON --output NEW_DIRECTORY`.
+  Reports retain original text, candidate matching evidence, scores and timings.
+- Validation initially passed 33 fuzzy/reference benchmark tests, including
+  threshold boundaries, spacing, bounded distance, negation, qualifiers, numbers,
+  ambiguous candidates, concept repetition, complete coverage and unchanged
+  question data. No model calls, live activation, production-data updates,
+  service restarts, commits or pushes were performed.
+
+#### Live fuzzy matching and reusable question glossaries (2026-10-08)
+
+- Implemented locally on `automark_nonai`. Added Prepare question glossaries for
+  an opened script and Prepare selected question glossaries for checked scripts.
+  Preparation deduplicates source questions, reuses saved entries and never uses
+  student answers as generation input. It uses the configured installed local
+  marking model; no new external lexical library is required.
+- The model proposes complete-answer and concept alternatives from teacher
+  material. Existing named criteria/weights are preserved. Clear counted
+  reference lists retain their derived count and equal weighting; holistic
+  questions receive complete-answer alternatives only. Ambiguous counted
+  references require clarification rather than invented allocations. Supplied
+  subject/topic/language is included; absent metadata is not inferred.
+- The review dialog shows teacher answers, details, marks, concepts and editable
+  alternatives. Approve glossary requires a reviewer and saves immediately;
+  Reject deactivates the scope. Neither action marks scripts. Failed drafts
+  are saved and not regenerated per student; an explicit retry control is
+  provided. Model generations are draft-only.
+- Added append-only question_glossaries storage, created idempotently when the
+  repository opens, with source fingerprint, context, model/prompt, status,
+  reviewer, timestamp and generation duration. Source changes invalidate reuse.
+  Individual deletion retains entries; Reset all AutoMark data removes them.
+  No migration was executed against the production database during development.
+- The marking service applies the latest approved matching glossary centrally,
+  then explicit run context. Original manifests remain unchanged. Every result
+  records glossary version and fuzzy policy; recovery identities include them.
+  The live sequence is teacher overrides/exact matches, approved concepts,
+  conservative fuzzy matches, then optional semantic AI. New runs persist the
+  effective fuzzy flag, including its default true value.
+- Use conservative fuzzy matching is visible and enabled by default. The live
+  matcher uses 97% similarity with at most one alphabetic character edit in a
+  word of at least four characters. Numeric spelling edits, changed punctuation,
+  changed protected qualifiers/negation, ambiguous alternatives and unexplained
+  additions defer to AI. Spacing-only matching additionally rejects short-token
+  boundary changes, including therapist/the rapist and nowhere/now here.
+  These guards are heuristic, not a guarantee of semantic equivalence.
+- Full-answer and concept aliases remain separate. Distinct concept scores use
+  the existing Decimal calculator, not similarity percentages. Original text is
+  retained, and UI/HTML exports include glossary IDs and fuzzy evidence.
+- Validation uses disposable databases and fake model responses for generation,
+  immediate approval, restart reuse, source invalidation, override precedence,
+  rejection/failure caching, reset/deletion, service integration, fuzzy toggle,
+  3.33/10 and 6.67/10, repetitions, complete coverage and adversarial wording.
+- The requested before/after 500-answer accuracy and timing comparison remains
+  pending teacher approval of actual glossary drafts. No approved alternatives
+  were fabricated to run that comparison, and no live generation, re-marking,
+  production-data changes, service restart, commit or push was performed. Earlier
+  zero-coverage benchmarks do not validate live fuzzy scoring accuracy. After
+  approval, measure generation time once per source question as well as marking
+  time, AI calls avoided, false zeros and excessive credit on held-out answers.
+- Final targeted regression suite: **152 passed, 11 live-model tests skipped**;
+  Markdown/diff whitespace and Python syntax checks passed. PyMuPDF emitted
+  existing SWIG deprecation warnings. No real-model accuracy claim is made.
+
+#### Live fuzzy threshold: 80% (2026-10-08)
+
+- At the user's request, lowered live fuzzy matching from 97% to 80% normalized
+  character similarity. Retained the one-character edit limit and all other
+  guards. Updated saved fuzzy policy and recovery identity so old checkpoints
+  cannot silently supply decisions under the new threshold. Historical offline
+  95/97/99% experiments remain unchanged.
+- Added boundary tests for exactly 80%, rejection above that threshold and
+  rejection of multiple edits; service tests verify saved threshold metadata.
+  This similarity threshold is not calibrated grading accuracy. Existing scores
+  are unchanged until re-marking; no restart, commit or push was performed.
+
+#### Use automatically derived concepts in live non-AI marking (2026-10-08)
+
+- Removed the live source restriction excluding `reference-list` rubrics from
+  deterministic concept matching and the enabled fuzzy concept stage. Both now
+  consume the same derived concepts/counts already used by semantic AI marking.
+  This does not regenerate rubrics, infer synonyms or approve glossary drafts.
+- Complete student-response coverage remains required. Unknown additions,
+  negation not matching a reference, missing counts and ambiguous rubrics still
+  defer. Existing distinct-concept calculation, decimal rounding and caps apply.
+  Fuzzy matching retains the user-selected 80% threshold and one-edit limit.
+- Literal matches record `derived-reference-concept-match` and `concept_source`;
+  fuzzy evidence records its concept source as well. Recovery identity changed
+  to prevent reuse of pre-change checkpoints. Existing scores remain unchanged.
+- Tests now expect derived concepts to participate in live matching and cover
+  3.33/10, 6.67/10, repetitions, unfamiliar clauses, negation, missing counts and
+  derived-concept fuzzy matches. Historical benchmark reports remain unchanged;
+  rerunning their baseline now reflects the updated live source policy.
+- Reference parsing itself is unchanged: parenthetical wording and list phrases
+  must still match literally (or satisfy the enabled fuzzy policy). This change
+  enables existing concepts; it does not guarantee broad paraphrase recognition.
+  No service restart, production-data edit, commit or push was performed.
+
+#### Automatically use generated glossary alternatives (2026-10-08)
+
+- User explicitly requested removing the approval prerequisite. Matching now
+  uses structurally valid saved `draft` glossaries as well as approved versions.
+  Rejected and failed entries stay inactive. Generation remains once per source
+  question through the existing preparation action; marking does not regenerate
+  failed drafts for every student.
+- Generated glossary provenance remains `draft`/model-generated, never falsely
+  teacher-approved. Results and exports distinguish it from approved versions.
+  Teacher edits/approval remain optional, rejection disables the latest scope,
+  and explicit run-level context retains precedence. Source invalidation and
+  input-based checkpoint identity remain in effect; checkpoint version advanced.
+- For unapproved generated counted or weighted rubrics, discard generated
+  complete-answer alternatives at application time and retain teacher-provided
+  ones. Use generated concept aliases through the rubric calculator. This
+  prevents Q20's single-concept full-answer draft from awarding 10/10 for one
+  valid concept. Holistic generated full-answer alternatives remain usable.
+- Added regression coverage showing an automatically active two-concept draft
+  awards 5/10 for one synonym and 10/10 for two; teacher rejection still removes
+  activation. This is structural validation, not calibrated semantic accuracy.
+  Existing records/scores were not changed; no restart, commit or push occurred.
+
+#### Repair glossary generation and stale draft reuse (2026-10-08)
+
+- Latest reviewed run had 5 direct written matches and 495 pending written
+  answers, with no AI fallback calls. Removing approval gating alone did not
+  repair failed concept-ID generation or empty/copy-only alternatives.
+- Added `question-glossary-v2`: model output uses schema-defined short keys;
+  application code preserves original concept IDs, descriptions, counts and
+  weights. Counted questions generate concept alternatives only, with a required
+  concise action form. Holistic questions generate complete-answer alternatives.
+- Empty/copy-only output, missing keys, malformed output, truncation and aliases
+  shared across concepts trigger at most one repair request. Remaining failure
+  is cached, rather than repeated for each student. Prompt emphasizes equivalent
+  phrases rather than related traits, maintaining objects and qualifiers.
+- An explicit Prepare question glossaries action refreshes older generated draft
+  and failed versions once. Approved/rejected teacher decisions remain intact;
+  same-version results are reused. Regeneration is not part of per-answer marking.
+- Validation: 68 focused tests passed across glossary, non-AI and grounding tests,
+  including IDs, full/partial credit, repetition, 3.33/10, weighted marks, stale
+  version handling, negation/additions, malformed/truncated generation and bounded
+  repair. Local model smoke results are saved separately in
+  `artifacts/glossary-v2-smoke/results.json`; production DB was opened read-only.
+- Final two-question Qwen smoke test generated Q16 alternatives in 3.43 seconds
+  and Q20 alternatives in 6.14 seconds (generation durations, not full workflow).
+  `vote` matched for 4.5/9; both election rights matched for 9/9; `tell the truth`
+  matched for 5/10 and `obey school rules and tell the truth` matched for 10/10.
+  `vote many times`, negation and unmatched additions remained unresolved.
+- This is a functional smoke test, not a 500-answer accuracy evaluation. Alias
+  coverage and semantic precision still vary: the final generated list omitted
+  `looking after school equipment` and included `admit mistakes` under truthfulness,
+  which is not an interchangeable phrase in every context. Structural validation
+  cannot prove equivalence. Generated provenance remains visible and teacher
+  edits/rejection remain available. Do not claim all pending answers are fixed.
+- Existing glossaries and student marks were not changed. To use the update,
+  reopen the app with this code, Prepare question glossaries (or Prepare selected
+  question glossaries), then start a new marking run. No restart, commit or push
+  was performed by this task.
+
+#### Broader phrase coverage and independent OR options (2026-10-08)
+
+- Added glossary prompt version `question-glossary-v3`. Preparation requests
+  natural clauses, first-person and first-step forms, concise actions and gerunds,
+  with up to twelve alternatives per target. Original text, scoring identities,
+  counts and weights remain unchanged. Existing generated drafts refresh on the
+  next explicit preparation action; teacher decisions remain preserved.
+- For one-concept questions, conservatively separate two complete imperative
+  OR clauses for generation, then merge their alternatives under the same concept.
+  This prevents generation from being asked to paraphrase both independently
+  sufficient actions as one combined requirement. The gate rejects parenthetical,
+  negated, conditional and shared-object constructions. It intentionally covers
+  only a limited set of standalone action verbs; ambiguous cases remain intact.
+- Complete response coverage, distinct-concept counting, fuzzy safeguards and
+  unresolved fallback remain unchanged. No substring scoring or automatic zero
+  scores were introduced.
+- Added `tools/benchmark_glossary_coverage.py`: read-only saved-run/material access,
+  teacher-only generation inputs, labels loaded after generation, separate reports
+  and incremental generation output so report failures do not lose inference data.
+- Validation: 21 glossary tests and 49 matching/grounding tests passed. Tests cover
+  separate OR actions receiving the same concept credit, negation, shared objects,
+  conditionals and rejection of unknown additions. Markdown/diff and compilation
+  checks passed.
+- Local Qwen evaluation across 500 saved written answers, with fuzzy enabled:
+  18 scored (10 concept matches, 5 original exact matches, 3 fuzzy matches),
+  482 unresolved. All 18 scores agree with simulation labels. Previous refreshed
+  glossary run with fuzzy enabled scored 15; latest fuzzy-disabled saved run scored
+  12. This is a modest coverage gain, not proof of general semantic accuracy.
+- Ten glossaries generated in 36.96 seconds total; matching-only evaluation took
+  0.21 seconds, excluding database loading, UI, exports and fallback. Reports:
+  `artifacts/glossary-v3-coverage/results.json` and
+  `artifacts/glossary-v3-coverage/results.generation.json`.
+- Limitations: finite phrase lists still miss natural variants. Generated output
+  can contain loose associations (such as admit mistakes under truthfulness),
+  so structural validation alone does not establish semantic equivalence. No
+  claim of independently validated accuracy or broad resolution is made.
+- No production glossaries, scores or jobs changed; no app restart, commit or push.
+
+#### Explicit glossary regeneration (2026-10-08)
+
+- Added Regenerate glossary on every question glossary card, including approved
+  and failed versions. It uses the current generator and selected local model
+  with the original teacher material. The card shows its version and prompt ID.
+- Successful regeneration appends a new automatically active model-generated
+  draft and replaces the displayed card; older approvals and drafts remain in
+  history. Unsaved card edits are not generation inputs. Existing marking runs
+  remain unchanged until the user starts another run.
+- Disable regeneration while work is running. If replacement generation fails,
+  retain an existing active draft/approved glossary and display the error.
+- Validation: 37 glossary/UI tests passed; repeated in-place regeneration and
+  failure retention were additionally checked through the targeted UI test.
+  No production generation, database edits, restart, commit or push performed.
+
+#### Optional subject and topic in new manifests (2026-10-08)
+
+- Backend MarkingManifest now copies nonblank textual `subject` and `topic`
+  from each assessment-owned question snapshot into `manifest.questions[]`.
+  Both are question-level fields, allowing different topics within an assessment.
+  Missing, null, blank or nontextual source values are omitted; no inferred values
+  or later question-bank lookups are used. Supplied strings are preserved.
+- Example question metadata: `"subject": "Civics", "topic": "Democracy"`.
+  Download serialization retains the fields through the existing package wrapper.
+  Package, answer-schema and geometry versions remain unchanged.
+- AutoMark validates supplied fields as strings and retains them through file
+  import, cache reload and saved `scoring_question` metadata. Older manifests with
+  neither field remain valid. Existing glossary source hashes already include
+  these fields; changing either requires a glossary for the new source.
+- Regression coverage checks snapshot isolation after question-bank edits, mixed
+  topics, missing/invalid source values, downloadable JSON roundtrip, unchanged
+  geometry, import/cache preservation, malformed imported types, saved marking
+  metadata and glossary invalidation. No scoring rules or AI prompts changed.
+- Applies to newly generated manifests only. Existing immutable layouts, imported
+  files, QR references and production records were not rewritten. No restart,
+  glossary generation, production re-marking, commit, push or deployment occurred.
+
+### 2026-10-08 — Subject-neutral marking authority and TIE context
+
+Implemented marking prompt `written-marking-v18` and glossary prompt `question-glossary-v4` locally.
+
+- Marking authority is explicitly: (1) teacher-authored criteria/corrections, (2) question wording and teacher references, (3) teacher-approved alternatives and relevant approved examples, (4) AI-generated suggestions. Reuse stored suggestions before assessing unfamiliar meaning; marking does not generate another glossary. Missing glossary coverage is not evidence of an incorrect answer.
+- Removed subject-specific examples from marking and glossary generation instructions. Retained concept independence, partial credit, full-answer interpretation, negation/qualifier safeguards and the distinction between irrelevant content and genuine ambiguity. Application code still computes marks.
+- Both requests include supplied subject, topic and language plus Tanzania Institute of Education (TIE) context. Question metadata takes precedence over supplied assessment metadata. Missing subject/topic is not inferred. This does not retrieve a TIE syllabus: no edition, grade, syllabus facts or additional scoring requirements may be invented.
+- Effective questions and AI audits retain source authority, glossary version/status and teacher corrections. Generated draft alternatives no longer masquerade as approved teacher-reference examples; approved glossary alternatives are labelled separately. Existing deterministic glossary activation rules remain unchanged.
+- Prompt identity invalidates AI checkpoint reuse. New glossary generation uses v4; existing approved glossaries remain reusable, and explicit regeneration is available. No existing scores, manifests or production records were rewritten; no model calls, restarts, commits or pushes were performed.
+- Validation covers request context, authority order, neutral wording, missing metadata, draft/approved provenance, override precedence and existing scoring tests. Mocked model tests verify integration, not real-model accuracy or speed; a user-started rerun is needed for that comparison.
+- Validation result: 85 tests passed, 11 opt-in live-model tests skipped; `git diff --check` passed.
+
+### 2026-10-08 — Minimal written matching and marking-history cleanup
+
+Implemented the live path: NFC/case/whitespace cleanup → complete exact match → guarded 90% full-answer fuzzy match → optional semantic AI. The matcher uses full Levenshtein distance divided by the longer normalized string length; there is no edit-count cap. Original text is retained. Multiple changed words are permitted, with aligned token counts, short-word/numeric/punctuation/negation/qualifier protections and rejection of ambiguous reference matches. The observed elected/deleted real-word confusion explicitly falls back to AI; other real-word confusions remain a heuristic limitation. Similarity never determines partial marks.
+
+Removed glossary UI and loading, retrieved examples, deterministic concept matching, typo proposals and lexical partial-score suggestions from live marking. Existing research helpers remain offline. Teacher-supplied complete alternatives remain eligible; named rubrics still guide AI and application-owned partial-credit calculation. Model prompt `written-marking-v19` is subject-neutral, includes supplied subject/topic only, and has no generic TIE context, glossary hierarchy, graded examples or generated explanations. The checkpoint version changed; individual/batch paths share the service.
+
+Read-only pre-cleanup comparison against the latest 500 written simulation labels found one exact match, zero fuzzy matches, zero incorrect automatic scores and zero additional saved AI requests/time. This is limited coverage, not evidence of fuzzy accuracy. No new model requests or production re-marking were performed for the comparison. Reproducible helper: `tools/benchmark_minimal_matching.py` (requires saved runs).
+
+Authorized transactional cleanup removed 21 glossary rows and 100 historical marking runs; teacher examples and checkpoints were already empty. Teacher score decisions embedded in historical runs were removed with them. Secure deletion was enabled and no backup was created. All job locks were obtained after process/DB checks indicated idle processing. Before/after fingerprints confirmed unchanged extraction tables: 50 jobs, 250 pages, 1,750 responses, 1,750 reviews, 842 transcriptions, 50 sources and 18,000 crops. Manifests and exported files were untouched. Jobs remain review-complete and ready for re-marking. Cleanup entry point: `tools/clear_marking_history.py --delete-marking-history` with an explicit database path; never runs at startup.
+
+Validation: targeted matcher, AI integration and marking tests passed (64 passed, 11 opt-in live-model tests skipped), including threshold, multiple-edit, numeric/negation/qualifier, ambiguity, partial-answer rejection, atomic rollback and busy-lock checks. Additional cleanup/re-mark integration verifies approvals survive and removed glossary/example sources are not loaded. No app restart, commit, push or deployment.
+
+### 2026-10-08 — Targeted neutral semantic guidance (v20)
+
+Updated `written-marking-v20` to explicitly accept correct terms inside sentences, singular/plural or grammatical variants when the question does not assess that distinction, specific actions fulfilling general reference actions, and context-supported expressions of individual concepts. No subject-specific examples were inserted. Negation, restrictive qualifiers, distinct concepts, independent partial credit and the prohibition on inventing missing actions remain. Minimal exact/fuzzy matching and model settings are unchanged.
+
+Named-concept output now uses a schema-constrained object keyed by every rubric concept ID rather than an array of repeated ID fields. The application validates the exact key set, rejects duplicate JSON keys, converts valid judgments to rubric order and retains existing evidence/score validation. Missing or malformed judgments remain unresolved after the existing bounded technical retry; no guessed judgments or additional semantic verification call. Prompt/checkpoint identity changed to prevent stale reuse. Holistic output is unchanged.
+
+Validation: 43 tests passed, 11 opt-in live-model tests skipped; `git diff --check` passed. Tests cover neutral request guidance, fixed concept keys, partial credit, omitted/duplicate concepts, invalid evidence, and existing matching/AI integration. Mocked decisions verify the protocol and calculator, not improved semantic accuracy. Next user-started re-mark should be compared with v19's 470/500 simulation agreement, 29 wrong scores, one pending answer, 16m41s marking time and 1.99s per AI-assessed answer. No live model evaluation, production-data mutation, restart, commit or push performed for this change.
+
+### 2026-10-08 — Compact reference-key and qualifier guidance (v21)
+
+Inspected v20's saved Q12 and Q16 failures read-only. Updated the neutral marking prompt to make the supplied teacher key authoritative, explicitly accept the named term without demanding a definition, and reject negated/misidentified terms or claims whose qualifiers change the action. Whole-claim assessment includes actor/object, quantity and restrictions; acting against a participant does not establish that role or entitlement. No subject-specific expected answers were inserted.
+
+Consolidated repeated instructions into a compact prompt, with tests enforcing at most 350 whitespace-delimited words for both holistic and concept modes. Retained v20's fixed concept-key schema, concise JSON-only output, think=False, existing output limit, application scoring and one normal assessment call. No extra explanation or semantic verification request; existing bounded technical recovery remains. Updated prompt/checkpoint identity to v21. This reduces instruction overhead but does not establish actual latency or accuracy improvement.
+
+Validation: 45 tests passed, 11 live-model tests skipped; compilation and diff checks passed. Tests verify reference-key/qualifier instructions, prompt budget, one-call valid decisions and prior protocol/scoring behavior. No live re-marking, production changes, restart, commit or push. Next user-started comparison baseline: v20 476/500 simulation agreement, 24 wrong scores, zero pending, 21m11s recorded marking and 2.53s per AI answer.
+
+### 2026-10-08 — Sparse writing and dense QR recovery
+
+Investigated the English revised 60-page template extraction. Eight visible short answers were falsely blank because whole-region dark-pixel density fell below 0.2%; blank regions bypass recognition. Added a connected-component check before accepting a low-density region as blank. Small writing now remains eligible for recognition irrespective of answer-box area; isolated pixel noise and thin border remnants are ignored. OCR models and image preparation remain unchanged.
+
+Added bounded tight-corner QR crops with a different resampling scale only after existing full-page, thresholded and half-page recovery fails. Original image coordinates are retained and the same QR parsing, conflict and alignment validation apply. The saved failing page 8 now decodes as TEST 2130, layout 0786c6be-c27e-4166-b04b-16a963076392-v6, page 4, student 733. All eight inspected false-blank crops now pass local-ink detection. No model calls were needed for these saved-image checks.
+
+Saved extraction records were not changed. Retry failed pages can recover page 8 after loading the new code. Previously extracted pages are skipped by resume/retry; their eight saved blank results need fresh extraction or explicit manual transcription, not merely another marking run. No app restart, commit or push performed.
+Validation: 69 written-extraction, page-alignment and manifest-preparation tests passed, including sparse text/noise and recovery coordinate regression tests; `git diff --check` passed.
+
+### 2026-10-08 — English extraction repair and requested-transformation guidance
+
+Authorized repair of job 57b2819a36eb4f7c91367ad86d17d9c5 used saved page/crop images only, without model requests. Recovered page 8 with the QR fallback and normal manifest/alignment validation; captured student 733 Q19/Q20. Saved twelve image-checked drafts: those two missing answers, eight falsely blank short answers, and two misread words (862 Q17 hers, 1117 Q19 theirs). All 60 pages are now extracted and document issues are cleared. Existing marking runs were not changed.
+
+Added transcription repair support that appends corrected drafts and invalidates only approvals preceding each repair, retaining their review history. Twelve answers require new approval; the other 288 remain approved. New approvals supersede the invalidation. Image-inspected drafts are protected from subsequent OCR/AI overwrite. Re-marking remains blocked until review is completed; old reports require regeneration after re-marking.
+
+Prompt v22 adds brief subject-neutral guidance: assess the requested transformation rather than incidental wording; accept established regional variants unless the distinction is tested; complete one-word answers are not automatically partial answers. This targets the observed Q14/Q20 failures without injecting exam-specific reference answers or adding model calls. Prompt identity changes prevent stale reuse. Semantic improvement still requires the user's next run.
+
+Validation: 31 AI/repair tests passed with 11 live-model tests skipped before the additional repair-overwrite regression; diff checks passed. No app restart, automatic approvals, automatic marking, commit or push.
+
+### 2026-10-08 — Subject-neutral task fulfillment (v23)
+
+Revised the shared semantic instructions to identify the requested task first, apply explicit teacher constraints, and treat reference answers as valid solutions rather than exhaustive wording templates. Transformations/completions must preserve required meaning; incidental framing and established regional/terminology variants are acceptable unless assessed. A partly-correct judgment requires an identifiable missing requirement. Existing independent concept credit, contradiction/qualifier checks, application-owned marks and compact single-request protocol remain. No subject-specific answers or synonym exceptions were added.
+
+Minimal matcher v2 removes layout spaces immediately before final `.`, `!` or `?`; it does not remove the punctuation itself or alter word boundaries, numbers, apostrophes or operators. Thus matching identical punctuation can bypass AI, but an omitted punctuation mark still follows the existing guarded fallback. Prompt v23 and checkpoint v8 invalidate incompatible recovery results. Saved responses, approvals and scores are unchanged.
+
+Validation: 61 tests passed, 11 opt-in live-model tests skipped. Added shared-prompt contract tests with five subject contexts and deterministic formatting/adversarial tests. These mocked model tests verify instructions, integration and request counts, not improved semantic decisions. Real-model regression remains to be measured in the next user-started run. No extra verification requests, production re-marking, restart, commit or push. OCR correction still requires image evidence; the confidently wrong readings remain a recognition limitation and are not silently corrected from the reference answer.
+
+### 2026-10-08 — Roll back v23 semantic instructions; retain formatting cleanup
+
+Following review of run 1914, restored the v22 semantic instruction text and holistic relation definitions. Assigned prompt identity `written-marking-v24` so recovery cannot reuse v23 decisions. Retained minimal matcher v2 and its conservative terminal-punctuation spacing cleanup. No additional model calls or subject-specific rules were introduced.
+
+The v23 run had eleven identified incorrect scores and six unnecessary pending answers, compared with nine and four in the preceding v22 run. The new failures were Q13 incorrect assertions receiving two full scores and two pending decisions. This observational comparison supports rolling back the instruction change; it does not establish causation or guarantee corrected decisions. Known v22 Q14/Q20 failures and recognition errors remain unresolved. Existing production results were not modified. User-started re-marking is required after loading the updated code.
+
+Validation: 61 tests passed, 11 opt-in live-model tests skipped. No live model requests, app restart, production re-marking, commit or push.
+
+### 2026-10-08 — User-requested 80% fuzzy threshold
+
+Lowered complete-answer Levenshtein similarity threshold from 90% to 80%, retaining aligned word counts, ambiguity rejection, short-word, numeric, punctuation, negation and qualifier safeguards. Matcher identity is minimal-written-v3; checkpoint identity is v9-minimal-80 and saved run policy records 0.80. No semantic prompt or partial-credit calculation changed. Bare `feelings` now matches `feeling` (87.5%); `feelings .` still falls back because punctuation differs. Added threshold-boundary and plural/punctuation regression checks. No production scores changed, model calls, restart, commit or push.
+
+### 2026-10-08 — Isolated term-identification experiment (v25)
+
+Changed only the name/term instruction block in the semantic prompt. For questions asking only for a name, the model is explicitly directed to identify the student's asserted answer and return equivalent when that assertion names the reference term, including a sentence or singular/plural form unless the distinction is assessed. Mere mention, negation, contradiction, misidentification and incompatible alternatives do not establish credit. The instruction contains no subject-specific reference answers. Prompt identity v25 invalidates older semantic checkpoints.
+
+OCR, 80% fuzzy matching, model settings, concept partial-credit calculation and all other semantic instructions remain unchanged. Added cross-subject term protocol tests and an opt-in live semantic regression set. Validation: 68 tests passed across the AI, minimal-matcher and new term tests; 18 opt-in live tests skipped. Mocked tests establish protocol and score calculation, not semantic improvement. No live model requests, production re-marking, restart, commit or push. Compare the next 500-answer run against v24's 460/500 simulation agreement, 22 scored mismatches, 18 pending and 17m09s marking; inspect all answers for regression, not just the eleven Q12 false zeros.

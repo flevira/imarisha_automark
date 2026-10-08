@@ -18,6 +18,11 @@ class JobRepository:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.connect() as db:
             db.executescript('''
+            CREATE TABLE IF NOT EXISTS question_glossaries(
+              id INTEGER PRIMARY KEY AUTOINCREMENT, scope TEXT NOT NULL, material TEXT NOT NULL,
+              context TEXT NOT NULL, status TEXT NOT NULL, model TEXT NOT NULL, prompt TEXT NOT NULL,
+              reviewer TEXT NOT NULL, error TEXT NOT NULL, seconds REAL NOT NULL,
+              created TEXT DEFAULT CURRENT_TIMESTAMP);
             CREATE TABLE IF NOT EXISTS teacher_examples(
               id INTEGER PRIMARY KEY AUTOINCREMENT, scope TEXT NOT NULL, text TEXT NOT NULL,
               score TEXT NOT NULL, reviewer TEXT NOT NULL, provenance TEXT NOT NULL,
@@ -60,6 +65,24 @@ class JobRepository:
                 db.execute('ALTER TABLE structured_reviews ADD COLUMN raw_text TEXT')
         if os.name != 'nt':
             self.path.chmod(0o600)
+
+    def glossary(self, scope):
+        with self.connect() as db:
+            row=db.execute('SELECT * FROM question_glossaries WHERE scope=? ORDER BY id DESC LIMIT 1',(scope,)).fetchone()
+        if not row:return None
+        value=dict(row)
+        for key in ('material','context'):value[key]=json.loads(value[key])
+        return value
+
+    def save_glossary(self, scope, material, context, status, model, prompt, reviewer='', error='', seconds=0):
+        from services.question_glossaries import validate
+        if status not in ('draft','approved','rejected','failed'):raise ValueError('Invalid glossary status')
+        if status=='approved' and not reviewer.strip():raise ValueError('Supply reviewer name before approval')
+        if status in ('draft','approved'):context=validate(material,context)
+        with self.connect() as db:
+            db.execute('INSERT INTO question_glossaries(scope,material,context,status,model,prompt,reviewer,error,seconds) VALUES(?,?,?,?,?,?,?,?,?)',
+                (scope,json.dumps(material),json.dumps(context),status,model,prompt,reviewer,error,seconds))
+        return self.glossary(scope)
 
     @contextmanager
     def connect(self):
@@ -175,6 +198,8 @@ class JobRepository:
                 row['review'] = dict(review) if review else None
                 draft=db.execute('SELECT result,language FROM structured_transcriptions WHERE job=? AND response=? ORDER BY sequence DESC LIMIT 1',(job,row['id'])).fetchone()
                 row['transcription'] = dict(json.loads(draft['result']),language=draft['language']) if draft else None
+                if review and row['transcription'] and row['transcription'].get('invalidates_review',0)>=review['sequence']:
+                    row['review']=None
             return rows
 
     def save_transcription(self, job, response_id, result, language):
@@ -182,6 +207,23 @@ class JobRepository:
         with self.connect() as db:
             db.execute('INSERT INTO structured_transcriptions(job,response,result,language) VALUES (?,?,?,?)',
                        (job,response_id,json.dumps(asdict(result)),language))
+
+    def save_transcription_repair(self, job, response_id, text, note):
+        """Save an image-checked correction, preserving history and requiring new approval."""
+        if not isinstance(text,str) or not text.strip() or len(text)>20000 or not note.strip():
+            raise ValueError('Supply corrected transcription and evidence note')
+        with self.lock(job),self.connect() as db:
+            db.execute('BEGIN IMMEDIATE')
+            row=db.execute('SELECT selection_mode FROM structured_responses WHERE job=? AND id=?',(job,response_id)).fetchone()
+            if not row or row[0]!='text':raise ValueError('Unknown written response')
+            latest=db.execute('SELECT MAX(sequence) FROM structured_reviews WHERE job=? AND response=?',(job,response_id)).fetchone()[0] or 0
+            value=dict(text=text,status='uncertain',review_reasons=['transcription-repair-needs-review'],
+                engine='image-inspection-repair-v1',seconds=0,model_digest=None,confidence=None,
+                invalidates_review=latest,repair_note=note)
+            db.execute('INSERT INTO structured_transcriptions(job,response,result,language) VALUES(?,?,?,?)',
+                (job,response_id,json.dumps(value),'en'))
+            db.execute("UPDATE structured_jobs SET status='review' WHERE id=?",(job,))
+            db.execute('DELETE FROM marking_checkpoints WHERE job=?',(job,))
 
     def save_example(self, scope, text, score, reviewer, source_job=None):
         from core.marking import decimal
@@ -251,7 +293,9 @@ class JobRepository:
             if row is None:
                 raise ValueError('Unknown response')
             latest = db.execute('SELECT MAX(sequence) FROM structured_reviews WHERE job=? AND response=?',(job,response_id)).fetchone()[0]
-            if latest != expected_sequence:
+            draft=db.execute('SELECT result FROM structured_transcriptions WHERE job=? AND response=? ORDER BY sequence DESC LIMIT 1',(job,response_id)).fetchone()
+            invalidated=bool(latest and draft and json.loads(draft[0]).get('invalidates_review',0)>=latest)
+            if latest != expected_sequence and not (expected_sequence is None and invalidated):
                 raise ValueError('This response changed; reload it before saving')
             raw = ExtractedResponse.from_json(row['raw'])
             if row['selection_mode']=='text':
@@ -368,6 +412,24 @@ class JobRepository:
             self.status(job,'complete')
 
 
+    def clear_marking_data(self):
+        """Delete marking history and glossaries, retaining extraction and approvals."""
+        with ExitStack() as locks:
+            targets={r['id'] for r in self.jobs()}
+            for job in sorted(targets):locks.enter_context(self.lock(job))
+            with self.connect() as db:
+                db.execute('PRAGMA secure_delete=ON')
+                db.execute('BEGIN IMMEDIATE')
+                if {r[0] for r in db.execute('SELECT id FROM structured_jobs')}!=targets:
+                    raise ValueError('Saved jobs changed; retry cleanup')
+                if db.execute("SELECT 1 FROM structured_jobs WHERE status='running' LIMIT 1").fetchone():
+                    raise ValueError('Extraction is running; defer cleanup')
+                counts={}
+                for table in ('question_glossaries','teacher_examples','marking_checkpoints','structured_marking_runs'):
+                    counts[table]=db.execute(f'SELECT COUNT(*) FROM {table}').fetchone()[0]
+                    db.execute(f'DELETE FROM {table}')
+            return counts
+
     def delete_saved_data(self, job=None, *, manifest_path=None, legacy_path=None):
         """Delete a selected job or all jobs while refusing active job locks.
 
@@ -401,7 +463,7 @@ class JobRepository:
                     # Include any orphaned historical records as part of a full reset.
                     for table in ('marking_checkpoints','structured_marking_runs','structured_transcriptions','structured_pages',
                                   'structured_responses','structured_crops','structured_reviews',
-                                  'structured_issues','structured_issue_reviews','structured_sources','teacher_examples'):
+                                  'structured_issues','structured_issue_reviews','structured_sources','teacher_examples','question_glossaries'):
                         db.execute(f'DELETE FROM {table}')
                     for alias,table in attached:
                         if db.execute(f"SELECT 1 FROM {alias}.sqlite_master WHERE type='table' AND name=?",(table,)).fetchone():

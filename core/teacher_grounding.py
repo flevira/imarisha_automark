@@ -21,10 +21,24 @@ def question_scope(question, rule=None):
 
 
 def reference_examples(question):
-    return [dict(text=text,score=str(decimal(question['maxMarks'])),approved=True,
-                 provenance='teacher-reference',reviewer='Manifest author')
-            for text in question.get('referenceAnswers',[])+question.get('acceptedAlternatives',[])
-            if isinstance(text,str) and text.strip()]
+    from core.marking_context import scoring_authority
+    authority=scoring_authority(question)
+    glossary=authority.get('glossary') or {}
+    authored=authority.get('teacherCorrections',{}).get('acceptedAlternatives',
+        authority.get('teacherMaterial',{}).get('acceptedAlternatives',[]))
+    refs=[dict(text=text,score=str(decimal(question['maxMarks'])),approved=True,
+               provenance='teacher-reference',reviewer='Manifest author')
+          for text in question.get('referenceAnswers',[]) if isinstance(text,str) and text.strip()]
+    for text in question.get('acceptedAlternatives',[]):
+        if not isinstance(text,str) or not text.strip():continue
+        if text in authored:
+            provenance='teacher-alternative'
+        elif glossary.get('status')=='approved':
+            provenance='teacher-approved-glossary'
+        else:
+            continue  # Draft suggestions are supplied separately, never as approved examples.
+        refs.append(dict(text=text,score=str(decimal(question['maxMarks'])),approved=True,provenance=provenance))
+    return refs
 
 
 def retrieve_examples(question,text,examples=(),limit=4):
@@ -39,31 +53,33 @@ def retrieve_examples(question,text,examples=(),limit=4):
     return (refs+ranked)[:limit]
 
 
-def approved_match(text,examples):
-    matches=[e for e in examples if e.get('approved') is True and normalize(e['text'])==normalize(text)]
+def approved_match(text,examples,rule=None):
+    def key(value):
+        if rule is not None:
+            from core.marking import text_value
+            return text_value(value,rule)
+        return normalize(value)
+    matches=[e for e in examples if e.get('approved') is True and key(e['text'])==key(text)]
     if not matches:return None
     scores={str(decimal(e['score']).normalize()) for e in matches}
     if len(scores)!=1:return dict(status='review',score=None,reason='conflicting-approved-examples',examples=matches)
     return dict(status='scored',score=str(decimal(matches[0]['score'])),reason='approved-example-match',examples=matches)
 
 
-def explicit_concept_match(question,text):
+def explicit_concept_match(question,text,rule=None):
     rubric=prepare_rubric(question)
-    if rubric['source'] not in ('explicit-concepts','explicit-criteria'):return None
-    clauses=[p.strip().rstrip('.') for p in re.split(r'\n|;|\s+and\s+',text,flags=re.I) if p.strip()]
-    clauses=[re.sub(r'^\s*(?:\([ivx\d]+\)|\d+[.)])\s*','',p,flags=re.I) for p in clauses]
-    if not clauses:return None
-    matched=set()
-    for clause in clauses:
-        ids=[c['id'] for c in rubric['concepts'] if normalize(clause) in
-             [normalize(a.rstrip('.')) for a in [c['description']]+c.get('acceptedAlternatives',[])]]
-        if len(ids)!=1:return None  # Unknown clause, negation, overlapping concepts: use semantic review.
-        matched.add(ids[0])
+    if rubric['source'] not in ('explicit-concepts','explicit-criteria','reference-list'):return None
+    from core.written_matching import complete_criteria
+    matched=complete_criteria(text,rubric['concepts'],
+        case_sensitive=(rule or {}).get('caseSensitive',False),
+        framing=(rule or {}).get('allowAnswerFraming',True))
+    if matched is None:return None
     segments=[dict(id='s1',text=text)]
     judgments=[dict(conceptId=c['id'],status='matched' if c['id'] in matched else 'not-demonstrated',
                     segmentIds=['s1'] if c['id'] in matched else []) for c in rubric['concepts']]
     result=grade_judgments(rubric,judgments,segments,question['maxMarks'])
-    result['reason']='approved-concept-match'
+    result['reason']='derived-reference-concept-match' if rubric['source']=='reference-list' else 'approved-concept-match'
+    result['concept_source']=rubric['source']
     return result
 
 

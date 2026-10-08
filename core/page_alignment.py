@@ -51,6 +51,15 @@ def decode_sheet(image: np.ndarray) -> DecodedSheet:
             factor = min(3., 1600/max(roi.shape[:2]))
             enlarged = cv2.resize(roi, None, fx=factor, fy=factor, interpolation=cv2.INTER_CUBIC)
             candidates.extend(detect(enlarged, factor, (x, y)))
+    if not any("=" in p for p, _ in candidates):
+        # Tight corner crops provide a different sampling scale for dense QR codes.
+        # Bounded recovery only after the normal page/half-page attempts fail.
+        h,w=image.shape[:2]
+        for x,y in ((2*w//3,0),(0,0),(0,2*h//3),(2*w//3,2*h//3)):
+            roi=image[y:min(h,y+h//3),x:min(w,x+w//3)]
+            factor=min(1.5,1600/max(roi.shape[:2]))
+            enlarged=cv2.resize(roi,None,fx=factor,fy=factor,interpolation=cv2.INTER_CUBIC)
+            candidates.extend(detect(enlarged,factor,(x,y)))
     valid, errors, legacy = [], [], False
     for payload, quad in candidates:
         # Ignore branding URLs; malformed assessment codes must not silently become legacy.

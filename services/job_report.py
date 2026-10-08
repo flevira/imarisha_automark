@@ -45,6 +45,11 @@ def export_job_report(repository, job, directory, resolver=None):
             explanation=result.get('reason','') if result else ''
             if result and result.get('teacher_decision'):explanation+=': '+result['teacher_decision'].get('note','')
             elif result and result.get('ai'):explanation+=': '+(result['ai'].get('explanation') or (result['ai'].get('proposal') or {}).get('explanation',''))
+            elif result and result.get('explanation'):explanation+=': '+result['explanation']
+            from core.written_matching import typo_note
+            explanation+=typo_note(result or {})
+            from core.fuzzy_marking import audit_note
+            explanation+=audit_note(result or {})
             calculation=(result or {}).get('ai',{}).get('calculation')
             if calculation:explanation+=f" Calculated credit: {calculation['credited_concepts']}/{calculation['required_concepts']} concepts; {calculation['score']} marks."
             u=(result or {}).get('uncertainty')

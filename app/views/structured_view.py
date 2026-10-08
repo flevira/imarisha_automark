@@ -228,7 +228,7 @@ def build_structured_view(page: ft.Page, repository=None):
             approved=ft.Checkbox(label='I reviewed the concepts, alternatives and partial-credit allocation',value=False)
             def accept(_):
                 if not approved.value:return
-                context=draft['context'];wording,criteria,concepts,count=fields
+                context=draft['context'];wording,criteria,concepts,count=fields[:4]
                 wording.value=context['questionText']
                 criteria.value='\n'.join(f"{c['marks']} | {c['description']} | {'; '.join(c.get('acceptedAlternatives',[]))}" for c in context['scoringCriteria'])
                 concepts.value='\n'.join(c['description']+' | '+'; '.join(c.get('acceptedAlternatives',[])) for c in context.get('acceptedConcepts') or [])
@@ -325,7 +325,13 @@ def build_structured_view(page: ft.Page, repository=None):
                         value='\n'.join(c['description']+(' | '+'; '.join(c.get('acceptedAlternatives',[])) if c.get('acceptedAlternatives') else '') for c in q.get('acceptedConcepts',[])))
                     count=ft.TextField(label=f'Q{raw.display_number}: required concept count',value=str(q.get('requiredConceptCount') or ''),
                         helper_text='For any-N concepts; otherwise inferred only from explicit question wording.')
-                    written_context[key]=(wording,criteria,concepts,count)
+                    alternatives=ft.TextField(label=f'Q{raw.display_number}: approved full-credit alternatives',multiline=True,
+                        helper_text='One complete acceptable answer per line. Saving these declares them teacher-approved; the original reference answer is retained.',
+                        value='\n'.join(q.get('acceptedAlternatives',[])))
+                    exhaustive=ft.Checkbox(label=f'Q{raw.display_number}: only listed complete answers are valid; others receive zero',
+                        value=(q.get('scoringRules') or {}).get('rejectUnlisted',False),
+                        disabled=(q.get('scoringRules') or {}).get('mode')=='numeric')
+                    written_context[key]=(wording,criteria,concepts,count,alternatives,exhaustive)
                     for field in written_context[key]:field.data=field.value or ''
                 q=dict(metadata.get((key[1],key[2]),{}),**previous.get(key[1],{}).get(key[2],{}))
                 if q.get('questionText'):
@@ -384,6 +390,13 @@ def build_structured_view(page: ft.Page, repository=None):
                 if result.get('similarity_estimate') and result['score'] is None:
                     estimate=result['similarity_estimate']
                     details.controls.append(ft.Text(f"Similarity suggestion: {estimate['suggested_score']}/{estimate['max_marks']} — needs teacher review; not included in totals. Lexical overlap is not correctness."))
+                if result.get('typo_suggestions'):
+                    from core.written_matching import typo_note
+                    details.controls.append(ft.Text(typo_note(result)))
+                    from core.fuzzy_marking import audit_note
+                    details.controls.append(ft.Text(audit_note(result)))
+                if result.get('engine')=='teacher-grounded-v1' and result.get('explanation'):
+                    details.controls.append(ft.Text('Rule-based marking: '+result['explanation']))
                 if result.get('ai',{}).get('calculation'):
                     calculation=result['ai']['calculation']
                     details.controls.append(ft.Text(f"Calculated credit: {calculation['credited_concepts']}/{calculation['required_concepts']} concepts; {calculation['score']} marks."))
@@ -540,13 +553,13 @@ def build_structured_view(page: ft.Page, repository=None):
                 refresh_jobs(); page.update()
 
     def policy_for(job):
-        policy=dict(version=1)
+        policy=dict(version=1,fuzzyMatching=True)
         if marking_policy.value!='manifest':policy['structured']=marking_policy.value
         runs=repository.marking_runs(job)
         context=dict((runs[0].get('policy') or {}).get('writtenContext',{})) if runs else {}
         target_layouts={r['response'].layout.layout_id for r in repository.responses(job)}
         for (context_job,layout_id,qid),fields in written_context.items():
-            wording,criteria,concepts,count=fields
+            wording,criteria,concepts,count,alternatives,exhaustive=fields
             if layout_id not in target_layouts:continue
             if all((f.value or '')==f.data for f in fields):continue
             points=[]
@@ -564,7 +577,15 @@ def build_structured_view(page: ft.Page, repository=None):
                 accepted.append(dict(id=f'concept-{index}',description=description.strip(),
                     acceptedAlternatives=[v.strip() for v in variants.split(';') if v.strip()]))
             if points and accepted:raise ValueError('Use weighted criteria OR any-N concepts, not both')
-            entry=dict(questionText=(wording.value or '').strip(),scoringCriteria=points,acceptedConcepts=None,requiredConceptCount=None)
+            if exhaustive.value and (points or accepted):
+                raise ValueError('An exhaustive complete-answer list cannot also use a partial-credit concept rubric')
+            entry=dict(context.get(layout_id,{}).get(qid,{}))
+            entry.update(questionText=(wording.value or '').strip(),scoringCriteria=points,acceptedConcepts=None,requiredConceptCount=None,
+                         acceptedAlternatives=[a.strip() for a in (alternatives.value or '').splitlines() if a.strip()])
+            if bool(exhaustive.value)!=bool(exhaustive.data):
+                entry['scoringRules']=dict(version=1,mode='text-exact',caseSensitive=False,collapseWhitespace=True,
+                    normalizeListFormatting=True,normalizePresentation=True,allowAnswerFraming=True,
+                    rejectUnlisted=bool(exhaustive.value))
             if accepted:entry['acceptedConcepts']=accepted
             if (count.value or '').strip():entry['requiredConceptCount']=int(count.value.strip())
             context.setdefault(layout_id,{})[qid]=entry

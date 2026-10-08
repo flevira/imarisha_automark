@@ -33,9 +33,11 @@ def mark_job(repository, job, resolver, reviewer, policy=None, assistant=None, p
     if not reviewer.strip():
         raise ValueError('Supply the teacher responsible for this marking run')
     if policy is not None and (not isinstance(policy, dict) or policy.get('version') != 1
-            or not set(policy) <= {'version','structured','written','writtenDefault','writtenContext'}
+            or not set(policy) <= {'version','structured','written','writtenDefault','writtenContext','fuzzyMatching'}
             or not isinstance(policy.get('written', {}), dict)):
         raise ValueError('Unsupported teacher scoring policy')
+    if policy is not None and type(policy.get('fuzzyMatching',True)) is not bool:raise ValueError('Invalid fuzzy policy')
+    policy=dict(policy or dict(version=1),fuzzyMatching=True)
     started = time.perf_counter()
     with repository.lock(job):
         info = repository.job(job)
@@ -81,19 +83,23 @@ def mark_job(repository, job, resolver, reviewer, policy=None, assistant=None, p
             qs={q['questionId']:q for q in known[layout_id].get('questions',[])}
             for qid,context in entries.items():
                 if (qid not in qs or qs[qid]['responseType']!='WRITTEN' or not isinstance(context,dict)
-                        or not set(context)<={'questionText','scoringCriteria','acceptedConcepts','requiredConceptCount'}):
+                        or not set(context)<={'questionText','scoringCriteria','acceptedConcepts','requiredConceptCount',
+                                             'acceptedAlternatives','scoringRules'}):
                     raise ValueError('Invalid written question context')
                 if not isinstance(context.get('questionText'),str) or not context['questionText'].strip():
                     raise ValueError('Supply the original question wording for written criteria')
                 from core.written_rubric import prepare_rubric
                 prepare_rubric(dict(qs[qid],**context))
+                if 'acceptedAlternatives' in context and (not isinstance(context['acceptedAlternatives'],list)
+                        or any(not isinstance(a,str) or not a.strip() for a in context['acceptedAlternatives'])):
+                    raise ValueError('Invalid approved answer alternatives')
         previous_runs=repository.marking_runs(job)
         previous_marks={(r['student_id'],r['layout_id'],r['question_id']):r for r in (previous_runs[0]['results'] if previous_runs else []) if r.get('teacher_decision')}
         results, totals, ai_cache = [], [], {}
         total_questions=sum(len(manifests[key]['questions']) for key,student in groups)
         resumed_questions=0;checkpoint_seconds=0
         # Exact input identity prevents old marks surviving response/rubric/example changes.
-        run_identity=dict(version='marking-checkpoint-v1-written-v15',snapshot=digest(snapshot),
+        run_identity=dict(version='marking-checkpoint-v9-minimal-80',snapshot=digest(snapshot),
                           policy=policy,reviewer=reviewer.strip(),engine=ENGINE,
                           assistant=type(assistant).__qualname__ if assistant else None,
                           model=getattr(getattr(assistant,'client',None),'model',None),
@@ -114,6 +120,8 @@ def mark_job(repository, job, resolver, reviewer, policy=None, assistant=None, p
             student_results = []
             for question in questions:
                 question=dict(question,**contexts.get(manifest['layoutId'],{}).get(question['questionId'],{}))
+                for field in ('subject','topic'):
+                    if not question.get(field) and isinstance(manifest.get(field),str):question[field]=manifest[field]
                 if question['responseType']=='WRITTEN':
                     from core.concept_criteria import with_concept_criteria
                     question=with_concept_criteria(question)
@@ -131,12 +139,13 @@ def mark_job(repository, job, resolver, reviewer, policy=None, assistant=None, p
                 if rule is None and isinstance(manifest.get('scoringPolicy'), dict):
                     rule = manifest['scoringPolicy']
                 if rule is None and manifest.get('scoringPolicy') in (None,'ASSESSMENT_POLICY_REQUIRED'):
-                    rule=(dict(version=1,mode='text-exact',caseSensitive=False,collapseWhitespace=True,normalizeListFormatting=True)
+                    rule=(dict(version=1,mode='text-exact',caseSensitive=False,collapseWhitespace=True,
+                               normalizeListFormatting=False,normalizePresentation=False,allowAnswerFraming=False)
                           if question['responseType']=='WRITTEN' else dict(version=1,mode='partial'))
-                from core.teacher_grounding import question_scope, reference_examples, approved_match, explicit_concept_match, uncertainty
+                from core.teacher_grounding import question_scope, uncertainty
+                if question['responseType']=='WRITTEN' and isinstance(rule,dict) and rule.get('mode')=='text-exact':
+                    rule=dict(rule,caseSensitive=False,collapseWhitespace=True,normalizeListFormatting=False,normalizePresentation=False,allowAnswerFraming=False,rejectUnlisted=False)
                 scope=question_scope(question,rule)
-                examples=repository.examples(scope) if question['responseType']=='WRITTEN' else []
-                question=dict(question,approvedExamples=examples)
                 checkpoint_key=digest(dict(run=run_identity,manifest=manifest,student=student,
                                            question=question,answers=answers,rule=rule,
                                            previous=previous_marks.get((student,key[2],qid))))
@@ -154,15 +163,13 @@ def mark_job(repository, job, resolver, reviewer, policy=None, assistant=None, p
                 previous=previous_marks.get((student,key[2],qid))
                 if previous and previous.get('example_scope')==scope and previous.get('responses')==[r for r in answers if r is not None]:
                     result.update(score=previous['score'],status='scored',reason='teacher-mark',engine='teacher',teacher_decision=previous['teacher_decision'])
-                if result['reason']=='unlisted-wording-needs-review':
-                    text='\n'.join(r['text'] for r in answers)
-                    grounded=approved_match(text,reference_examples(question)+examples) or explicit_concept_match(question,text)
-                    if grounded:
-                        result.update(grounded,engine='teacher-grounded-v1')
-
-                if result['reason']=='unlisted-wording-needs-review':
-                    from core.answer_similarity import suggest_partial_mark
-                    result['similarity_estimate']=suggest_partial_mark(question,'\n'.join(r['text'] for r in answers))
+                if question['responseType']=='WRITTEN' and result['reason'] in ('accepted-answer','unlisted-wording-needs-review'):
+                    from core.minimal_matching import candidate
+                    matched=candidate(question,'\n'.join(r['text'] for r in answers),rule)
+                    if matched['accepted']:
+                        result.update(matched['result'],engine='minimal-written-v3',matching_evidence=matched)
+                        if matched['reason']=='fuzzy-full-answer':result['fuzzy_evidence']=matched
+                result['fuzzy_policy']=dict(enabled=True,threshold=.80,max_edits=None)
                 if assistant and result['reason']=='unlisted-wording-needs-review':
                     text='\n'.join(r['text'] for r in answers)
                     if '[illegible]' not in text.lower():
@@ -187,6 +194,8 @@ def mark_job(repository, job, resolver, reviewer, policy=None, assistant=None, p
                         else:
                             result['reason']=assistance.get('reason','ai-unresolved')
                 result['uncertainty']=uncertainty(result)
+                from core.minimal_matching import VERSION
+                result['nonai_version']=VERSION
                 result.update(example_scope=scope,scoring_question={k:v for k,v in question.items() if k!='approvedExamples'},student_id=student,layout_id=key[2],layout_version=key[3],
                               assessment_type=key[0],assessment_id=key[1],assessment_group_id=key[4],
                               manifest_digest=digest(manifest),rule=rule,question_text=question.get('questionText'),answer_detail=question.get('answerDetail'),concept_count=question.get('conceptCount'),criteria_source=question.get('criteriaSource'),reference_answers=question.get('referenceAnswers',[]),scoring_criteria=question.get('scoringCriteria',[]),marking_rubric=question.get('markingRubric'),

@@ -171,3 +171,17 @@ def test_bulk_approval_does_not_turn_untranscribed_handwriting_into_blank(setup,
     # Individual transcription approval no longer requires a comment.
     repo.review(job,row['id'],action='approve',student='00530',selected=[],reviewer='Teacher',raw_text='12')
     assert next(r for r in repo.responses(job) if r['id']==row['id'])['review']['raw_text']=='12'
+
+
+def test_local_ink_preserves_sparse_short_answers():
+    import cv2
+    import numpy as np
+    from core.written_extraction import has_local_ink
+    image=np.full((400,1100),255,np.uint8)
+    cv2.putText(image,'his',(15,35),cv2.FONT_HERSHEY_SIMPLEX,.5,0,1)
+    dark=image<200
+    assert float(np.mean(dark))<.002
+    assert has_local_ink(dark)
+    assert not has_local_ink(np.zeros_like(dark))
+    noise=np.zeros_like(dark);noise[20,20]=True;noise[50,60]=True
+    assert not has_local_ink(noise)
